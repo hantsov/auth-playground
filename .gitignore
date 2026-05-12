@@ -1,0 +1,51 @@
+# Backend (Gradle) — applies under any subproject
+**/build/
+**/.gradle/
+**/out/
+**/bin/
+**/.settings/
+**/.classpath
+**/.project
+
+# Frontend (Node.js) — applies under any subproject
+**/node_modules/
+**/dist/
+
+# Claude
+.claude/worktrees
+.claude/settings.local.json
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temp files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+coverage/
+*.lcov
