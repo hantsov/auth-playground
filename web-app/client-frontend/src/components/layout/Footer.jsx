@@ -1,6 +1,5 @@
 /*
- * Footer — minimal single-line strip. The GitHub link is a placeholder;
- * point the href at the real repo when this lands somewhere.
+ * Footer — minimal single-line strip.
  *
  * lucide-react no longer ships brand marks, so the GitHub glyph is
  * inlined as an SVG here rather than pulled from an icon set.
@@ -22,7 +21,9 @@ const Footer = () => {
       <div className="mx-auto max-w-6xl px-6 h-12 flex items-center justify-between text-xs text-zinc-500">
         <span>Playground Web-App</span>
         <a
-          href="#"
+          href="https://github.com/hantsov/auth-playground"
+          target="_blank"
+          rel="noopener noreferrer"
           className="inline-flex items-center gap-1.5 hover:text-zinc-900 transition-colors"
           aria-label="View source on GitHub"
         >
