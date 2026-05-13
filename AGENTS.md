@@ -12,17 +12,9 @@ A **playground**, not a production system. Primary value is clarity: someone sho
 - Verbose comments explaining auth concepts are intentional. Do not strip them as noise.
 - Do not introduce abstractions or indirection that obscure the OAuth2 flow.
 
-## Tech stack quick reference
-
-- **Backend (resource-backend):** Java 25, Spring Boot 4.0, Spring Security 7, Hibernate 7, Gradle 9.5 (Kotlin DSL), Flyway, PostgreSQL 16
-- **Upstream IdP (idp-server):** Java 25, Spring Boot 4.0, Spring Authorization Server 7 (now inside Spring Security 7), Thymeleaf, Flyway, PostgreSQL 16
-- **Frontend:** React 19, Vite 7, React Router 7, keycloak-js 26, Axios
-- **Auth chain:** Keycloak 26.4 (realm `playground`, brokered-only) → `playground-idp` upstream (idp-server, OIDC OP at :9000)
-- **Orchestration:** Docker Compose v2
-
-These versions are deliberately current. Do not downgrade to "more common" versions when adding deps.
-
 ## Conventions
+
+- **Versions are deliberately current** (Java 25, Spring Boot 4, Spring Security 7, React 19, etc. — full stack table in [README.md](README.md#tech-stack)). Do not downgrade to "more common" versions when adding deps; demonstrating modern Spring + React OIDC patterns is part of what the playground exists to show.
 
 - **Backend package layout:** each Spring Boot module roots at `ee.authplayground.<artifact>` (e.g. `ee.authplayground.resourceserver`, `ee.authplayground.idpserver`). Under each root, two top-level packages:
   - `appcore` — application-wide plumbing (e.g. `appcore.security` holds the security configs). Anything cross-cutting that isn't tied to a domain belongs here.
