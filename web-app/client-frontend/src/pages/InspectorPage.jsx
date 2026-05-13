@@ -75,6 +75,17 @@ const InspectorPage = () => {
           claim. The application row is auto-synced from the JWT on every
           login; the timestamp below shows when that last ran.
         </p>
+        {tokenParsed?.identity_provider && (
+          <p className="mt-3 text-sm text-zinc-700">
+            <span className="font-medium">Identity provider:</span>{' '}
+            <code className="text-xs bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded">
+              {tokenParsed.identity_provider}
+            </code>
+            <span className="ml-2 text-zinc-500">
+              — Keycloak issued this token after federating to an upstream IdP.
+            </span>
+          </p>
+        )}
         {user?.lastSyncedAt && (
           <p className="mt-2 text-xs text-zinc-500">
             Last synced: {formatTimestamp(user.lastSyncedAt)}

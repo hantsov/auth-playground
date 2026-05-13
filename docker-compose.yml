@@ -5,6 +5,7 @@ networks:
 volumes:
   keycloak-postgres-data:
   backend-postgres-data:
+  idp-postgres-data:
 
 services:
   # Keycloak PostgreSQL Database
@@ -44,12 +45,40 @@ services:
       - "8080:8080"
     volumes:
       # Mount the whole realms/ directory; --import-realm imports every JSON file in it.
-      - ./keycloak/realms:/opt/keycloak/data/import
+      - ./authorization-server/keycloak/realms:/opt/keycloak/data/import
+    # `host.docker.internal` reaches the dev machine from inside the container,
+    # which is how Keycloak's server-to-server calls find the IdP server when
+    # it's running locally (./gradlew bootRun) outside Docker. Docker Desktop
+    # on Mac/Windows wires this automatically; Linux needs the explicit mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       keycloak-postgres:
         condition: service_healthy
     networks:
       - keycloak-network
+
+  # IdP PostgreSQL Database (used by idp-server — separate instance from
+  # backend-postgres and keycloak-postgres on purpose: the playground's
+  # pedagogy is that each component owns its own datastore.)
+  idp-postgres:
+    image: postgres:16
+    container_name: idp-postgres
+    environment:
+      POSTGRES_DB: idpdb
+      POSTGRES_USER: idpuser
+      POSTGRES_PASSWORD: idppass123
+    volumes:
+      - idp-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - keycloak-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idpuser -d idpdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Application PostgreSQL Database (used by resource-backend)
   backend-postgres:

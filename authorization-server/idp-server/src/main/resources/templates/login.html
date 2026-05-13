@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Sign in to Playground</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" th:href="@{/css/login.css}">
+</head>
+<body>
+  <main class="card">
+    <header>
+      <h1>Sign in to Playground</h1>
+      <p class="subtitle">Authentication is handled by the Playground Identity Provider.</p>
+    </header>
+
+    <!-- Flash banners -->
+    <div th:if="${error}" class="banner banner-error" role="alert" th:text="${error}">Invalid credentials</div>
+    <div th:if="${message}" class="banner banner-info" role="status" th:text="${message}">Signed out</div>
+
+    <!-- Method picker. The radios drive which form-panel is shown via CSS
+         (:checked + sibling selectors). No JS required for the swap. -->
+    <fieldset class="method-picker" aria-label="Authentication method">
+      <legend>Choose how to sign in</legend>
+      <label class="method-option">
+        <input type="radio" name="method" value="password" checked>
+        <span>Username &amp; password</span>
+      </label>
+      <label class="method-option">
+        <input type="radio" name="method" value="smart-id">
+        <span>Smart-ID <em class="badge">Coming soon</em></span>
+      </label>
+    </fieldset>
+
+    <!-- Username + password form -->
+    <section class="form-panel form-panel-password">
+      <form method="post" th:action="@{/login}" autocomplete="on">
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" required autofocus autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="primary">Sign in</button>
+      </form>
+    </section>
+
+    <!-- Smart-ID form (placeholder). Fields render but submission is disabled. -->
+    <section class="form-panel form-panel-smart-id">
+      <form onsubmit="return false" aria-describedby="smart-id-note">
+        <div class="field">
+          <label for="smart-id-country">Country</label>
+          <select id="smart-id-country" name="country">
+            <option value="EE">Estonia (EE)</option>
+            <option value="LT">Lithuania (LT)</option>
+            <option value="LV">Latvia (LV)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="smart-id-national">National identification number</label>
+          <input id="smart-id-national" name="nationalId" type="text" inputmode="numeric" pattern="[0-9]+" placeholder="e.g. 30303039914">
+        </div>
+        <button type="submit" class="primary" disabled>Coming soon</button>
+        <p id="smart-id-note" class="form-note">Smart-ID authentication will be enabled in a future iteration.</p>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

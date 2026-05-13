@@ -1,0 +1,152 @@
+{
+  "realm": "playground",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 30,
+  "roles": {
+    "realm": [
+      {
+        "name": "USER",
+        "description": "User role",
+        "composite": false,
+        "clientRole": false,
+        "containerId": "playground"
+      },
+      {
+        "name": "ADMIN",
+        "description": "Admin role",
+        "composite": false,
+        "clientRole": false,
+        "containerId": "playground"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "react-client",
+      "name": "React Public Client",
+      "description": "Public client for React frontend",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [],
+  "identityProviders": [
+    {
+      "alias": "playground-idp",
+      "displayName": "Playground IdP",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "updateProfileFirstLoginMode": "off",
+      "config": {
+        "syncMode": "IMPORT",
+        "clientId": "kc-broker-client",
+        "clientSecret": "kc-broker-secret",
+        "clientAuthMethod": "client_secret_basic",
+        "issuer": "http://localhost:9000",
+        "authorizationUrl": "http://localhost:9000/oauth2/authorize",
+        "tokenUrl": "http://host.docker.internal:9000/oauth2/token",
+        "jwksUrl": "http://host.docker.internal:9000/oauth2/jwks",
+        "userInfoUrl": "http://host.docker.internal:9000/userinfo",
+        "validateSignature": "true",
+        "useJwksUrl": "true",
+        "defaultScope": "openid profile email"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "auto-grant-user-role",
+      "identityProviderAlias": "playground-idp",
+      "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+      "config": {
+        "syncMode": "INHERIT",
+        "role": "USER"
+      }
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "playground browser flow",
+      "description": "Brokered-only browser flow: existing session cookie OR redirect to playground-idp. The default Forms (username/password) step is intentionally absent — local Keycloak login is disabled for this realm.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": false
+        },
+        {
+          "authenticator": "identity-provider-redirector",
+          "authenticatorConfig": "redirect-to-playground-idp",
+          "requirement": "ALTERNATIVE",
+          "priority": 25,
+          "userSetupAllowed": false,
+          "authenticatorFlow": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "redirect-to-playground-idp",
+      "config": {
+        "defaultProvider": "playground-idp"
+      }
+    }
+  ],
+  "browserFlow": "playground browser flow"
+}

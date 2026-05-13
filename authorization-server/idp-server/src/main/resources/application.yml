@@ -1,0 +1,59 @@
+server:
+  port: 9000
+
+spring:
+  application:
+    name: auth-playground-idp-server
+
+  thymeleaf:
+    cache: false  # dev convenience; revisit before any "production-ish" build
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/idpdb}
+    username: ${SPRING_DATASOURCE_USERNAME:idpuser}
+    password: ${SPRING_DATASOURCE_PASSWORD:idppass123}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    org.springframework.security: INFO
+    ee.authplayground.idpserver: DEBUG
+    org.flywaydb: INFO
+
+# Custom playground namespace. Keep all our config under one prefix so
+# nothing collides with Spring's own keys.
+playground:
+  idp:
+    # The URL browsers use to reach this server. MUST match what we want
+    # in the JWT `iss` claim — Keycloak validates this exact string.
+    issuer-url: ${PLAYGROUND_IDP_ISSUER_URL:http://localhost:9000}
+    # Local file holding the RSA private key (JWKS format). Gitignored.
+    # In Docker, this folder is bind-mounted so the key survives rebuilds.
+    signing-key-path: ${PLAYGROUND_IDP_SIGNING_KEY_PATH:./keys/signing-key.json}
+    # Keycloak's identity inside this IdP. Hard-coded for the playground;
+    # in a real system the secret would be generated and rotated.
+    keycloak-broker:
+      client-id: ${PLAYGROUND_IDP_KEYCLOAK_CLIENT_ID:kc-broker-client}
+      client-secret: ${PLAYGROUND_IDP_KEYCLOAK_CLIENT_SECRET:kc-broker-secret}
+      # Phase 2 fills this in based on the realm's identity provider alias.
+      # The brokering callback URL is fixed by Keycloak's URL scheme:
+      #   {keycloak-base}/realms/{realm}/broker/{provider-alias}/endpoint
+      redirect-uri: ${PLAYGROUND_IDP_KEYCLOAK_REDIRECT_URI:http://localhost:8080/realms/playground/broker/playground-idp/endpoint}
