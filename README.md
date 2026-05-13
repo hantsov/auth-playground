@@ -1,47 +1,38 @@
 # AuthN + AuthZ Playground
 
-A self-contained playground for experimenting with OAuth2 / OpenID Connect, anchored on **Keycloak** as the authorization server. The repository contains everything needed to bring up a full local stack — auth server, resource server, SPA client, databases — with `docker compose up`.
+A self-contained playground for experimenting with OAuth2 / OpenID Connect end-to-end. **Keycloak** sits at the centre as the realm-level authorization server — it issues OIDC tokens to the SPA and carries authorization data (roles) inside those tokens — but it does no authentication of its own. **Authentication is delegated** to a custom upstream identity provider built on Spring Authorization Server (where username/password lives today and Smart-ID will plug in). A Spring Boot **resource server** validates the issued access tokens to gate its REST API.
 
-The project name is intentionally generic. Keycloak is the *current* implementation of the OIDC role; the structure leaves room to swap or add other identity providers later.
+This setup leverages the **identity brokering** pattern. New authentication methods land on the IdP without touching Keycloak's realm config or the resource server.
 
 ## What's in here
 
-- **Keycloak** authorization server with a pre-configured realm (`playground`), one public client (`react-client`), one test user, and a `USER` realm role.
+- **Keycloak** as the realm-level authorization server. Pre-configured realm (`playground`), one public client (`react-client`), one upstream identity-provider entry (`playground-idp`), and a `USER` realm role. Brokered-only: Keycloak's own username/password login is disabled, and the browser auto-redirects to the upstream IdP.
+- **idp-server** — custom upstream identity provider built on Spring Authorization Server 7 (Java 25, Spring Boot 4). Owns the actual user authentication: username/password is live, Smart-ID is stubbed with placeholder fields. Federated to Keycloak as an OIDC provider; users live in its own Postgres.
 - **resource-backend** — Spring Boot 4 / Java 25 OAuth2 resource server. Validates JWTs against Keycloak's JWKS, exposes a small REST API, persists data via Flyway-managed PostgreSQL.
-- **client-frontend** — React 19 / Vite 7 SPA acting as an OAuth2 public client. Uses Authorization Code + PKCE; talks to `keycloak-js` directly through a custom `AuthProvider` context.
-- Two PostgreSQL instances — one for Keycloak's own state, one for the resource-backend's app data.
+- **client-frontend** — React 19 / Vite 7 SPA acting as an OAuth2 public client. Uses Authorization Code + PKCE against Keycloak; talks to `keycloak-js` directly through a custom `AuthProvider` context.
+- Three PostgreSQL instances — one each for Keycloak's own state, idp-server's user accounts, and the resource-backend's app data.
 
 ## Architecture
 
 ```
-                                                     ┌────────────────────┐
-                                                     │  idp-postgres      │
-                                                     │  (idp-server user  │
-                                                     │   accounts)        │
-                                                     └─────────▲──────────┘
-                                                               │ JDBC
-                                                               ▼
-                              ┌──────────────────────┐  Auth Code  ┌───────────────────┐
-                              │  idp-server          │◄────────────│  Keycloak 26      │
-                              │  (Spring Auth Server,│   (broker)  │  (auth server)    │
-                              │   custom OIDC OP —   │             │   federates auth  │
-                              │   username/password, │             │   to upstream     │
-                              │   Smart-ID stub)     │             │   IdP)            │
-                              └──────────────────────┘             └────────┬──────────┘
-                                                                            │ JDBC
-                                                                            ▼
-                                                                 ┌─────────────────────┐
-                                                                 │  keycloak-postgres  │
-                                                                 │  (Keycloak state)   │
-                                                                 └─────────────────────┘
-        OIDC / PKCE          ▲ ▲ JWKS
-        ┌────────────────────┘ └────────────────┐
-        │                                       │
-┌───────┴─────────┐   Bearer JWT   ┌────────────┴─────┐    JDBC    ┌─────────────────────┐
-│ client-frontend │───────────────►│ resource-backend │◄──────────►│  backend-postgres   │
-│  (React SPA,    │  REST /api/*   │  (Spring Boot,   │            │  (app data, Flyway) │
-│   public client)│                │   resource srv.) │            └─────────────────────┘
-└─────────────────┘                └──────────────────┘
+   ┌──────────────────────┐                  ┌──────────────────────┐                  ┌──────────────────────┐
+   │    idp-postgres      │                  │  keycloak-postgres   │                  │   backend-postgres   │
+   │  (user accounts)     │                  │  (Keycloak state)    │                  │  (app data, Flyway)  │
+   └──────────▲───────────┘                  └──────────▲───────────┘                  └──────────▲───────────┘
+              │ JDBC                                    │ JDBC                                    │ JDBC
+              │                                         │                                         │
+   ┌──────────┴───────────┐   Auth Code      ┌──────────┴───────────┐                  ┌──────────┴───────────┐
+   │    idp-server        │   (broker)       │    Keycloak 26       │                  │  resource-backend    │
+   │ (Spring Auth Server, │◄─────────────────│  (auth server,       │                  │ (Spring Boot OAuth2  │
+   │  custom OIDC OP)     │                  │   brokered-only)     │                  │  resource server)    │
+   └──────────────────────┘                  └──────────▲───────────┘                  └──────────▲───────────┘
+                                                        │                                         │
+                                                        │ OIDC + PKCE                             │ Bearer JWT
+                                                        │ (browser)                               │ REST /api/*
+                                                        │                                         │
+                                             ┌──────────┴─────────────────────────────────────────┴──────────┐
+                                             │           client-frontend (React SPA, public client)          │
+                                             └───────────────────────────────────────────────────────────────┘
 ```
 
 **Flow:**
@@ -57,14 +48,14 @@ The resource-backend doesn't know upstream brokering exists — it only sees Key
 
 ## Tech stack
 
-| Layer | Tech |
-|---|---|
-| Auth server | Keycloak 26.4 (brokered-only — local login disabled) |
-| Upstream IdP | Java 25, Spring Boot 4.0, Spring Authorization Server 7, Thymeleaf, Flyway |
-| Resource server | Java 25, Spring Boot 4.0 (Spring Security 7, Hibernate 7), Gradle 9.5 (Kotlin DSL), Flyway |
-| Client | React 19, Vite 7, React Router 7, keycloak-js 26, Axios |
-| Databases | PostgreSQL 16 (×3 — one each for Keycloak, idp-server, resource-backend) |
-| Orchestration | Docker Compose v2 |
+| Layer | Tech                                                                                                                     |
+|---|--------------------------------------------------------------------------------------------------------------------------|
+| Auth server | Keycloak 26.4 (brokered-only — local login disabled)                                                                     |
+| Upstream IdP | Java 25, Gradle 9.5 (Kotlin DSL), Spring Boot 4.0, Spring Security 7 with Spring Authorization Server, Thymeleaf, Flyway |
+| Resource server | Java 25, Gradle 9.5 (Kotlin DSL), Spring Boot 4.0, Spring Security 7 with OAuth2 Resource Server, Flyway                 |
+| Client | React 19, Vite 7, React Router 7, keycloak-js 26, Axios                                                                  |
+| Databases | PostgreSQL 16 (×3 — one each for Keycloak, idp-server, resource-backend)                                                 |
+| Orchestration | Docker Compose v2                                                                                                        |
 
 ## Folder structure
 
@@ -126,12 +117,13 @@ docker compose up -d keycloak-postgres keycloak idp-postgres backend-postgres
 docker compose logs -f keycloak    # ready when it logs "Running the server in development mode"
 ```
 
-### Mode 1 — everything containerized
+### Mode 1 — everything containerized except idp-server
 
-Smoke test the whole stack. No hot-reload anywhere.
+Closest-to-prod smoke test available today. Keycloak, the resource-backend, and the nginx-served frontend all run in containers; idp-server still needs to run locally via Gradle until it's dockerized (see [BACKLOG.md](BACKLOG.md)).
 
 ```bash
-docker compose up --build
+docker compose up --build                                  # everything in compose
+( cd authorization-server/idp-server && ./gradlew bootRun ) # idp-server, separate terminal
 ```
 
 > Vite caveat: `VITE_*` env vars are baked at build time, so values in `docker-compose.yml` only apply when you actually `docker compose build` the frontend. The defaults compiled into the bundle match the local stack, so this works in practice.
@@ -147,22 +139,24 @@ Hot-reload on all three apps. Backend uses Spring DevTools, frontend uses Vite H
 ( cd web-app/client-frontend && npm install && npm run dev )
 ```
 
-### Mode 3 — infra + backend containerized, frontend local
+### Mode 3 — infra + resource-backend containerized, frontend local
 
-Iterate on the SPA without touching the JVM.
+Iterate on the SPA without rebuilding the resource server. idp-server runs locally as always.
 
 ```bash
-docker compose up -d keycloak-postgres keycloak backend-postgres resource-backend
+docker compose up -d keycloak-postgres keycloak idp-postgres backend-postgres resource-backend
+( cd authorization-server/idp-server && ./gradlew bootRun )
 ( cd web-app/client-frontend && npm run dev )
 ```
 
-### Mode 4 — infra containerized, backend local, frontend containerized
+### Mode 4 — infra containerized, resource-backend local, frontend containerized
 
-Iterate on the backend while testing against the production-style nginx-served frontend.
+Iterate on the resource-backend against the production-style nginx-served frontend.
 
 ```bash
-docker compose up -d keycloak-postgres keycloak backend-postgres
+docker compose up -d keycloak-postgres keycloak idp-postgres backend-postgres
 docker compose up -d --build client-frontend
+( cd authorization-server/idp-server && ./gradlew bootRun )
 ( cd web-app/resource-backend && ./gradlew bootRun )
 ```
 
