@@ -31,6 +31,20 @@ The user has invoked discussion mode. They want to **think out loud with you**, 
 
 ## Exiting
 
-Discussion mode persists until the user clearly asks for an action ("ok, do it", "go ahead", "implement that", "make the change"). When they do, confirm what you're about to do in one sentence, then proceed normally — discuss mode is over for that turn.
+Discussion mode persists until the user uses an explicit action phrase. Examples that qualify: "exit discuss", "go ahead", "go", "do it", "implement that", "write it", "apply", "create it", "make the change", "save it", "ship it".
+
+If the user's message doesn't contain a phrase substantially equivalent to one of those, you are still in discuss mode. Decisions being resolved, questions being answered, options being chosen, or "sounds good" responses are **not** exit phrases.
+
+When they do use an exit phrase, confirm what you're about to do in one sentence, then proceed normally — discuss mode is over for that turn.
 
 If you're unsure whether a request is "still discussing" or "now do it," ask. Better one clarifying question than an unwanted edit.
+
+### Common misreads (don't fall for these)
+
+- **User answering your clarifying questions ≠ go-ahead.** You asked "should we use option A or B?" → they said "B" → you're still in discuss. They picked an option; they didn't authorize the action.
+- **User refining individual decisions ≠ go-ahead.** "Yes, three columns, Tailwind, light theme" is shaping the plan, not authorizing execution.
+- **"All my questions are answered" ≠ "I want you to write the file."** Decisions being fully resolved is a precondition for action, not a request for it.
+- **Don't pre-frame the exit.** Avoid closing lines like "ready when you say go" or "I'll write this whenever you give the signal" — they make any subsequent message feel like an exit cue. Either close with no closing question, or close with an explicit binary: "do you want to keep refining, or are you ready for me to drop discuss and write?"
+- **The "I would have asked anyway" test.** Before taking any mutating action, ask yourself: can I quote the exact phrase where the user authorized this? If not, you're guessing. Stay in discuss and ask: "Should I exit discuss and do this now, or refine further?"
+
+The skill never errs by asking one too many times. It does err by writing one time too many.
