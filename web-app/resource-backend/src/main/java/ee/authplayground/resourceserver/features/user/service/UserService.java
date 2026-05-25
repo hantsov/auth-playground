@@ -48,23 +48,23 @@ public class UserService {
      * Throws 409 Conflict if a row already exists for this subject.
      */
     @Transactional
-    public UserData register(RegisterUser cmd) {
-        if (userDataRepository.findByKeycloakUserId(cmd.subject()).isPresent()) {
-            log.warn("Registration attempted for already-provisioned user: {}", cmd.subject());
+    public UserData register(RegisterUser registerUserCmd) {
+        if (userDataRepository.findByKeycloakUserId(registerUserCmd.subject()).isPresent()) {
+            log.warn("Registration attempted for already-provisioned user: {}", registerUserCmd.subject());
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "User already registered");
         }
 
         UserData user = new UserData();
-        user.setKeycloakUserId(cmd.subject());
-        user.setUsername(cmd.username());
-        user.setEmail(cmd.email());
-        user.setFirstName(cmd.firstName());
-        user.setLastName(cmd.lastName());
+        user.setKeycloakUserId(registerUserCmd.subject());
+        user.setUsername(registerUserCmd.username());
+        user.setEmail(registerUserCmd.email());
+        user.setFirstName(registerUserCmd.firstName());
+        user.setLastName(registerUserCmd.lastName());
         user.setLastSyncedAt(LocalDateTime.now());
 
         UserData saved = userDataRepository.save(user);
-        log.info("Provisioned user row id={} keycloak_user_id={}", saved.getId(), cmd.subject());
+        log.info("Provisioned user row id={} keycloak_user_id={}", saved.getId(), registerUserCmd.subject());
         return saved;
     }
 
@@ -82,20 +82,20 @@ public class UserService {
      * touched by sync.
      */
     @Transactional
-    public UserData sync(SyncUser cmd) {
-        UserData user = userDataRepository.findByKeycloakUserId(cmd.subject())
+    public UserData sync(SyncUser syncUserCmd) {
+        UserData user = userDataRepository.findByKeycloakUserId(syncUserCmd.subject())
                 .orElseThrow(() -> {
-                    log.warn("Sync requested for unprovisioned user: {}", cmd.subject());
+                    log.warn("Sync requested for unprovisioned user: {}", syncUserCmd.subject());
                     return new ResponseStatusException(HttpStatus.NOT_FOUND,
                             "User not registered");
                 });
 
-        if (cmd.username() != null && !cmd.username().isBlank()) {
-            user.setUsername(cmd.username());
+        if (syncUserCmd.username() != null && !syncUserCmd.username().isBlank()) {
+            user.setUsername(syncUserCmd.username());
         }
-        user.setEmail(cmd.email());
-        user.setFirstName(cmd.firstName());
-        user.setLastName(cmd.lastName());
+        user.setEmail(syncUserCmd.email());
+        user.setFirstName(syncUserCmd.firstName());
+        user.setLastName(syncUserCmd.lastName());
         user.setLastSyncedAt(LocalDateTime.now());
 
         UserData saved = userDataRepository.save(user);
