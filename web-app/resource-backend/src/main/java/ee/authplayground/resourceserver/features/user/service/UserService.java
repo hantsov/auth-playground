@@ -1,11 +1,12 @@
 package ee.authplayground.resourceserver.features.user.service;
 
+import ee.authplayground.resourceserver.features.user.command.RegisterUser;
+import ee.authplayground.resourceserver.features.user.command.SyncUser;
 import ee.authplayground.resourceserver.features.user.entity.UserData;
 import ee.authplayground.resourceserver.features.user.repository.UserDataRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -18,21 +19,13 @@ import java.util.Optional;
  * <p>
  * The resource server is authoritative over <em>application</em> state
  * (name, email, custom JSONB, when we last synced from the IdP).
- * Keycloak is authoritative over <em>identity</em>: the canonical name,
- * email and username live in the JWT and are mirrored into the local row
- * on every login via {@link #syncFromJwt(Jwt)}.
+ * The IdP (Keycloak) is authoritative over <em>identity</em>: the canonical
+ * name, email and username are mirrored into the local row on every login
+ * via {@link #sync(SyncUser)}.
  * <p>
- * Two flows feed into this service:
- * <ol>
- *   <li><b>Registration</b> ({@link #register(Jwt)}): first time the
- *       resource server sees a {@code sub}, the user confirms in the SPA
- *       and a row is created from the JWT claims.</li>
- *   <li><b>Sync</b> ({@link #syncFromJwt(Jwt)}): on every subsequent
- *       login bootstrap, the SPA asks the backend to refresh local
- *       fields from the current token so the app stays in step with the
- *       IdP.</li>
- * </ol>
- * Pure reads are served via {@link #findCurrent(Jwt)} which never writes.
+ * The service deliberately knows nothing about JWTs, sessions, or any other
+ * auth transport — callers translate at the boundary into the command types
+ * defined in {@code features.user.command}.
  */
 @Service
 @RequiredArgsConstructor
@@ -42,84 +35,71 @@ public class UserService {
     private final UserDataRepository userDataRepository;
 
     /**
-     * Look up the user row keyed by the JWT's {@code sub} claim.
-     * Empty {@link Optional} when no row exists — the SPA's account
+     * Look up the user row keyed by the stable user id ({@code sub} in JWT
+     * terms). Empty {@link Optional} when no row exists — the SPA's account
      * bootstrap interprets that as "needs registration."
      */
-    public Optional<UserData> findCurrent(Jwt jwt) {
-        return userDataRepository.findByKeycloakUserId(jwt.getSubject());
+    public Optional<UserData> findCurrent(String subject) {
+        return userDataRepository.findByKeycloakUserId(subject);
     }
 
     /**
-     * Create the user row from the validated JWT.
-     * Throws 409 Conflict if a row already exists for this {@code sub}.
-     * Throws 400 if the JWT is missing {@code preferred_username}, which
-     * the schema requires (the NOT NULL constraint on {@code username}).
+     * Create the user row from the IdP-supplied identity.
+     * Throws 409 Conflict if a row already exists for this subject.
      */
     @Transactional
-    public UserData register(Jwt jwt) {
-        String keycloakUserId = jwt.getSubject();
-
-        if (userDataRepository.findByKeycloakUserId(keycloakUserId).isPresent()) {
-            log.warn("Registration attempted for already-provisioned user: {}", keycloakUserId);
+    public UserData register(RegisterUser cmd) {
+        if (userDataRepository.findByKeycloakUserId(cmd.subject()).isPresent()) {
+            log.warn("Registration attempted for already-provisioned user: {}", cmd.subject());
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "User already registered");
         }
 
-        String preferredUsername = jwt.getClaim("preferred_username");
-        if (preferredUsername == null || preferredUsername.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "JWT is missing preferred_username");
-        }
-
         UserData user = new UserData();
-        user.setKeycloakUserId(keycloakUserId);
-        user.setUsername(preferredUsername);
-        user.setEmail(jwt.getClaim("email"));
-        user.setFirstName(jwt.getClaim("given_name"));
-        user.setLastName(jwt.getClaim("family_name"));
+        user.setKeycloakUserId(cmd.subject());
+        user.setUsername(cmd.username());
+        user.setEmail(cmd.email());
+        user.setFirstName(cmd.firstName());
+        user.setLastName(cmd.lastName());
         user.setLastSyncedAt(LocalDateTime.now());
 
         UserData saved = userDataRepository.save(user);
-        log.info("Provisioned user row id={} keycloak_user_id={}", saved.getId(), keycloakUserId);
+        log.info("Provisioned user row id={} keycloak_user_id={}", saved.getId(), cmd.subject());
         return saved;
     }
 
     /**
-     * Mirror the current JWT claims into the existing user row.
+     * Mirror the IdP-supplied identity into the existing user row.
      * <p>
-     * Keycloak is canonical: nullable fields ({@code email},
-     * {@code first_name}, {@code last_name}) follow the claim value
+     * The IdP is canonical: nullable fields ({@code email},
+     * {@code firstName}, {@code lastName}) follow the command value
      * verbatim, including nulls. {@code username} is constrained NOT NULL
-     * by the schema, so it is only overwritten when the JWT carries a
-     * non-blank {@code preferred_username} — in practice it always does,
-     * since that claim is how the user authenticated.
+     * by the schema, so it is only overwritten when the command carries a
+     * non-blank value — in practice it always does, since that field is how
+     * the user authenticated.
      * <p>
      * {@code custom_data} (JSONB) is application-owned and is never
      * touched by sync.
      */
     @Transactional
-    public UserData syncFromJwt(Jwt jwt) {
-        String keycloakUserId = jwt.getSubject();
-
-        UserData user = userDataRepository.findByKeycloakUserId(keycloakUserId)
+    public UserData sync(SyncUser cmd) {
+        UserData user = userDataRepository.findByKeycloakUserId(cmd.subject())
                 .orElseThrow(() -> {
-                    log.warn("Sync requested for unprovisioned user: {}", keycloakUserId);
+                    log.warn("Sync requested for unprovisioned user: {}", cmd.subject());
                     return new ResponseStatusException(HttpStatus.NOT_FOUND,
                             "User not registered");
                 });
 
-        String preferredUsername = jwt.getClaim("preferred_username");
-        if (preferredUsername != null && !preferredUsername.isBlank()) {
-            user.setUsername(preferredUsername);
+        if (cmd.username() != null && !cmd.username().isBlank()) {
+            user.setUsername(cmd.username());
         }
-        user.setEmail(jwt.getClaim("email"));
-        user.setFirstName(jwt.getClaim("given_name"));
-        user.setLastName(jwt.getClaim("family_name"));
+        user.setEmail(cmd.email());
+        user.setFirstName(cmd.firstName());
+        user.setLastName(cmd.lastName());
         user.setLastSyncedAt(LocalDateTime.now());
 
         UserData saved = userDataRepository.save(user);
-        log.debug("Synced user row id={} from JWT", saved.getId());
+        log.debug("Synced user row id={} from IdP", saved.getId());
         return saved;
     }
 }

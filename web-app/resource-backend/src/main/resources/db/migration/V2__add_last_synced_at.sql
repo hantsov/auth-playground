@@ -3,4 +3,4 @@
 -- and the Token Inspector page surfaces this timestamp so the sync flow is
 -- visible to anyone exploring the playground.
 ALTER TABLE user_data
-    ADD COLUMN last_synced_at TIMESTAMP;
+    ADD COLUMN last_synced_at TIMESTAMPTZ;
