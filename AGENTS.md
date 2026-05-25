@@ -3,6 +3,8 @@
 Guidance for AI coding assistants (Claude Code, Cursor, Codex, etc.) working in this repo.
 
 > Project overview, architecture, ports, run modes, and first-run setup live in [README.md](README.md). Read it before suggesting structural changes. Subprojects have their own READMEs ([idp-server](authorization-server/idp-server/README.md), [resource-backend](web-app/resource-backend/README.md), [client-frontend](web-app/client-frontend/README.md)) — consult them when working in those subtrees.
+>
+> Subproject-specific conventions for AI assistants live alongside each app's code: [resource-backend/AGENTS.md](web-app/resource-backend/AGENTS.md). Read the relevant one when working in that subtree (others will be added as conventions accumulate).
 
 ## What this project is
 
