@@ -1,4 +1,4 @@
-# AuthN + AuthZ Playground
+# AuthN + AuthZ Playground For Spring + KC Ecosystem
 
 A self-contained playground for experimenting with OAuth2 / OpenID Connect end-to-end. **Keycloak** sits at the centre as the realm-level authorization server — it issues OIDC tokens to the SPA and carries authorization data (roles) inside those tokens — but it does no authentication of its own. **Authentication is delegated** to a custom upstream identity provider built on Spring Authorization Server (where username/password lives today and Smart-ID will plug in). A Spring Boot **resource server** validates the issued access tokens to gate its REST API.
 
@@ -35,27 +35,7 @@ This setup leverages the **identity brokering** pattern. New authentication meth
                                              └───────────────────────────────────────────────────────────────┘
 ```
 
-**Flow:**
-1. Browser hits client-frontend → `keycloak-js` checks for an existing session; if none, redirects to Keycloak.
-2. Keycloak's realm has local login disabled and a single upstream IdP configured (`playground-idp`). The browser is auto-redirected to **idp-server** at `/oauth2/authorize`.
-3. The user authenticates on idp-server's login page (username/password, eventually Smart-ID). idp-server issues an OIDC token to Keycloak via Authorization Code (confidential client, server-to-server).
-4. Keycloak validates the upstream token, creates a shadow user on first login (via the trimmed-down "first broker login" flow), and issues its **own** tokens to the SPA via Authorization Code + PKCE.
-5. SPA calls the resource-backend with `Authorization: Bearer <access_token>`.
-6. resource-backend validates the JWT signature against Keycloak's JWKS endpoint and maps `realm_access.roles` to Spring Security authorities.
-7. Protected endpoints query backend-postgres and return data scoped to the authenticated user.
-
-The resource-backend doesn't know upstream brokering exists — it only sees Keycloak-issued JWTs. The Token Inspector page surfaces the JWT's `identity_provider` claim, which is how you can tell brokering happened.
-
-## Tech stack
-
-| Layer | Tech                                                                                                                     |
-|---|--------------------------------------------------------------------------------------------------------------------------|
-| Auth server | Keycloak 26.4 (brokered-only — local login disabled)                                                                     |
-| Upstream IdP | Java 25, Gradle 9.5 (Kotlin DSL), Spring Boot 4.0, Spring Security 7 with Spring Authorization Server, Thymeleaf, Flyway |
-| Resource server | Java 25, Gradle 9.5 (Kotlin DSL), Spring Boot 4.0, Spring Security 7 with OAuth2 Resource Server, Flyway                 |
-| Client | React 19, Vite 7, React Router 7, keycloak-js 26, Axios                                                                  |
-| Databases | PostgreSQL 16 (×3 — one each for Keycloak, idp-server, resource-backend)                                                 |
-| Orchestration | Docker Compose v2                                                                                                        |
+See [docs/tech-overview.md](docs/tech-overview.md) for the full request/token flow and tech stack.
 
 ## Folder structure
 
@@ -80,102 +60,35 @@ auth-playground/
 
 `authorization-server/idp-server/` is a custom Spring-based OIDC OpenID Provider that handles user authentication. Keycloak brokers to it as an upstream IdP — it remains the authorization server issuing tokens to the SPA, but the actual login (username/password, later Smart-ID) happens on the IdP. See its [README](authorization-server/idp-server/README.md) for details.
 
-## Ports
-
-| Service | URL |
-|---|---|
-| Keycloak | http://localhost:8080 |
-| idp-server | http://localhost:9000 |
-| resource-backend | http://localhost:8081 |
-| client-frontend | http://localhost:5173 |
-| backend-postgres | localhost:5432 |
-| idp-postgres | localhost:5433 |
-
-## Default credentials
-
-| Where | User | Password |
-|---|---|---|
-| Keycloak admin console | `admin` | `admin` |
-| idp-server (Conan) | `conan` | `conan123` |
-| idp-server (Matrix) | `matrix` | `matrix123` |
-| backend-postgres | `appuser` | `apppass123` |
-| keycloak-postgres | `keycloak` | `keycloak123` |
-| idp-postgres | `idpuser` | `idppass123` |
-
-These are intentionally weak — local dev only.
-
----
-
-## Running locally
+## Quickstart for Local
 
 Infrastructure (Keycloak + all three databases) always runs in Docker. The idp-server, resource-backend, and frontend can each run locally or containerized, independently. **idp-server is not yet dockerized** — run it locally via Gradle for now.
 
-### Step 0 — start the infra
+### Start the infra
 
 ```bash
 docker compose up -d keycloak-postgres keycloak idp-postgres backend-postgres
 docker compose logs -f keycloak    # ready when it logs "Running the server in development mode"
 ```
 
-### Mode 1 — everything containerized except idp-server
-
-Closest-to-prod smoke test available today. Keycloak, the resource-backend, and the nginx-served frontend all run in containers; idp-server still needs to run locally via Gradle until it's dockerized (see [BACKLOG.md](BACKLOG.md)).
-
-```bash
-docker compose up --build                                  # everything in compose
-( cd authorization-server/idp-server && ./gradlew bootRun ) # idp-server, separate terminal
-```
-
-> Vite caveat: `VITE_*` env vars are baked at build time, so values in `docker-compose.yml` only apply when you actually `docker compose build` the frontend. The defaults compiled into the bundle match the local stack, so this works in practice.
-
-### Mode 2 — infra in Docker, JVM + frontend local *(recommended for development)*
+### Run backend + frontend outside Docker *(recommended for development)*
 
 Hot-reload on all three apps. Backend uses Spring DevTools, frontend uses Vite HMR, idp-server restarts when you edit its sources.
 
 ```bash
-# After Step 0 — in three separate terminals:
+# After starting the infra — in three separate terminals:
 ( cd authorization-server/idp-server && ./gradlew bootRun )
 ( cd web-app/resource-backend && ./gradlew bootRun )
 ( cd web-app/client-frontend && npm install && npm run dev )
 ```
 
-### Mode 3 — infra + resource-backend containerized, frontend local
-
-Iterate on the SPA without rebuilding the resource server. idp-server runs locally as always.
-
-```bash
-docker compose up -d keycloak-postgres keycloak idp-postgres backend-postgres resource-backend
-( cd authorization-server/idp-server && ./gradlew bootRun )
-( cd web-app/client-frontend && npm run dev )
-```
-
-### Mode 4 — infra containerized, resource-backend local, frontend containerized
-
-Iterate on the resource-backend against the production-style nginx-served frontend.
-
-```bash
-docker compose up -d keycloak-postgres keycloak idp-postgres backend-postgres
-docker compose up -d --build client-frontend
-( cd authorization-server/idp-server && ./gradlew bootRun )
-( cd web-app/resource-backend && ./gradlew bootRun )
-```
-
-### Common compose commands
-
-```bash
-docker compose up -d --build resource-backend   # rebuild + restart one service
-docker compose logs -f resource-backend         # tail logs
-docker compose down                             # stop everything (keep volumes)
-docker compose down -v                          # stop + wipe volumes (fresh start)
-```
-
----
-
-## First-run
-
-The first time you sign in (as `conan` or `matrix`), Keycloak silently brokers to the upstream IdP, you authenticate there, Keycloak creates a shadow user, and the SPA lands on `/register`. At that point the resource-backend has no row for your Keycloak `sub`, so the SPA routes you through `POST /api/user/register` to confirm the imported claims. Every subsequent login fires `POST /api/user/sync` in the background so the row mirrors the latest JWT claims (name, email, username); the Token Inspector page shows the `lastSyncedAt` timestamp.
+### First-run
 
 Smoke test: `curl http://localhost:8081/actuator/health` should return `{"status":"UP"}`. Sign in via the SPA → land on the IdP login page → enter `conan` / `conan123` → confirm registration → land on `/dashboard`. The Token Inspector (user menu → Token Inspector) shows the JWT (note the `identity_provider: playground-idp` claim) and the synced DB row side by side.
+
+*The first time you sign in (as `conan` or `matrix`), Keycloak silently brokers to the upstream IdP, you authenticate there, Keycloak creates a shadow user, and the SPA lands on `/register`. At that point the resource-backend has no row for your Keycloak `sub`, so the SPA routes you through `POST /api/user/register` to confirm the imported claims. Every subsequent login fires `POST /api/user/sync` in the background so the row mirrors the latest JWT claims (name, email, username); the Token Inspector page shows the `lastSyncedAt` timestamp.*
+
+For other run-mode combinations (fully containerized, mixed modes), ports, default credentials, and common compose commands, see [docs/local-setup-overview.md](docs/local-setup-overview.md).
 
 ---
 
@@ -186,5 +99,7 @@ For deeper details on each app — environment variables, security model, build/
 - [`authorization-server/idp-server/README.md`](authorization-server/idp-server/README.md)
 - [`web-app/resource-backend/README.md`](web-app/resource-backend/README.md)
 - [`web-app/client-frontend/README.md`](web-app/client-frontend/README.md)
+
+For architecture, request/token flow, and the full tech stack, see [`docs/tech-overview.md`](docs/tech-overview.md). For ports, default credentials, and other local run modes, see [`docs/local-setup-overview.md`](docs/local-setup-overview.md).
 
 Deferred work and known gaps are tracked in [`BACKLOG.md`](BACKLOG.md).
