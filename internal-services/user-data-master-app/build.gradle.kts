@@ -19,29 +19,32 @@ repositories {
 }
 
 dependencies {
-    // Spring Boot BOM via Gradle's native platform() support.
+    // Import the Spring Boot BOM via Gradle's native platform support.
+    // Must be declared in every configuration that contains unversioned dependencies,
+    // because platform() constraints do not flow across independent configurations.
     implementation(platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES))
     annotationProcessor(platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES))
 
-    // Spring Boot Starters
+    // Spring Boot Starters.
+    //
+    // Note what is NOT here: no authorization-server, no OAuth2 *client*. This
+    // service only ever receives tokens minted elsewhere and validates them.
+    // It never mints one, never logs anyone in, and never calls out.
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-security")
-    implementation("org.springframework.boot:spring-boot-starter-oauth2-authorization-server")
-//    implementation("org.springframework.security:spring-security-oauth2-authorization-server:7.0.5")
-    implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
 
-    // This server is an OAuth2 *client* as well as an authorization server, and
-    // the two roles point in opposite directions: it issues tokens to Keycloak
-    // for users, and obtains a client_credentials token from Keycloak for
-    // itself, to read from user-data-master. Not a circularity — see
-    // UserMasterClientConfig.
-    implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+    // flyway-core is pulled in transitively by spring-boot-starter-flyway.
+    // flyway-database-postgresql must still be declared explicitly — the starter
+    // is database-agnostic and does not include any database-specific module.
+    implementation("org.flywaydb:flyway-database-postgresql")
 
-    // No data-jpa, no Flyway, no PostgreSQL driver, and that is the point of
-    // Phase 1: this server owns no user data. It reads credentials from
-    // user-data-master over HTTP and keeps nothing.
+    // PostgreSQL JDBC driver
+    runtimeOnly("org.postgresql:postgresql")
 
     // Lombok
     compileOnly("org.projectlombok:lombok")

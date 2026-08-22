@@ -41,11 +41,16 @@ import java.util.UUID;
  *       that the authorize endpoint redirects unauthenticated users to.</li>
  * </ol>
  * <p>
- * For Phase 1 the registered-client repository is in-memory and holds a
- * single client representing Keycloak. The client secret is hard-coded
- * here and also referenced from the realm JSON; this is deliberate
- * dev-only convenience — see the playground's weak-creds-on-purpose
- * convention. Phase 4 replaces the in-memory store with a JDBC-backed one.
+ * The registered-client repository is in-memory and holds a single client
+ * representing Keycloak. The client secret is hard-coded here and also
+ * referenced from the realm JSON; this is deliberate dev-only convenience —
+ * see the playground's weak-creds-on-purpose convention.
+ * <p>
+ * If it ever moves to a JDBC-backed store, note that authorizations become
+ * serialized too — and the authenticated principal
+ * ({@code UserDataDetails}) carries person attributes, so it would need a
+ * Jackson mixin registered with Spring Security's modules rather than just
+ * working by default.
  */
 @Configuration
 public class AuthorizationServerConfig {
@@ -85,8 +90,7 @@ public class AuthorizationServerConfig {
                 })
                 .authorizeHttpRequests(authorize -> authorize.anyRequest().authenticated())
                 // When an unauthenticated browser lands on /oauth2/authorize,
-                // bounce it to our login page (Phase 1 uses Spring's auto-
-                // generated form; Phase 3 swaps in the Thymeleaf method picker).
+                // bounce it to our Thymeleaf login page at /login.
                 // API callers (non-HTML Accept) get a 401 instead.
                 .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
                         new LoginUrlAuthenticationEntryPoint("/login"),
