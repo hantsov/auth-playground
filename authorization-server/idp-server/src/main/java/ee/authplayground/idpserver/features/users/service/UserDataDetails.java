@@ -96,6 +96,48 @@ public class UserDataDetails extends User {
     }
 
     /**
+     * Carries no {@code {id}} prefix on purpose. Spring Security's
+     * {@code DelegatingPasswordEncoder} refuses a value it cannot map to an
+     * encoder, so if this ever reached a password comparison the result would be
+     * an immediate exception rather than a silent match against some literal.
+     */
+    private static final String NO_STORED_CREDENTIAL = "no-stored-credential-smart-id-is-inherent";
+
+    /**
+     * The principal for an <b>inherent</b> authentication method — today,
+     * Smart-ID.
+     *
+     * <h2>There is no hash because there is no credential</h2>
+     * The password path fetches a stored secret and compares it. Nothing
+     * equivalent exists here: the private key lives on the user's phone, SK
+     * holds the certificate, and the proof was a signature verified before this
+     * method was ever called. Passing a placeholder is not a workaround for a
+     * missing value — it is an accurate statement that this server holds no
+     * secret for this person.
+     * <p>
+     * The placeholder is a string no password encoder can ever match, and
+     * {@code eraseCredentials()} clears it immediately afterwards, so nothing
+     * downstream can mistake it for something comparable. {@link User} refuses a
+     * null password outright, which is the only reason a value is passed at all.
+     *
+     * <h2>Enabled has one input here, not two</h2>
+     * The password factory ands together the person and the credential, because
+     * revoking one method is not disabling a human. With no credential row there
+     * is only the person's own flag to consult.
+     */
+    public static UserDataDetails ofInherentMethod(UserDataResponse user) {
+        UserDataDetails details = new UserDataDetails(
+                user.id().toString(),
+                NO_STORED_CREDENTIAL,
+                user.enabled(),
+                AuthorityUtils.createAuthorityList("ROLE_USER"),
+                user
+        );
+        details.eraseCredentials();
+        return details;
+    }
+
+    /**
      * Full name, or {@code null} when neither half is known. Assembled here so
      * the claims customizer stays a list of claims rather than a list of claims
      * plus string handling.

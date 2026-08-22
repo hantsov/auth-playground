@@ -70,6 +70,62 @@ playground:
     # goes here; there is no local fallback and deliberately no cache.
     user-master:
       base-url: ${PLAYGROUND_IDP_USER_MASTER_BASE_URL:http://localhost:9100}
+    # Smart-ID, SK's DEMO environment. Authentication only — signing is out of
+    # scope — and read-only: a Smart-ID login writes nothing anywhere.
+    #
+    # base-url, scheme-name and truststore are ONE setting in three parts: they
+    # all name the environment, and mixing them fails in ways that do not look
+    # like configuration mistakes. A production truststore rejects every demo
+    # chain; the production scheme-name changes nine bytes of the signed payload
+    # and the signature simply stops verifying, with no field to point at.
+    smart-id:
+      # Server root WITHOUT the version segment — the API's own paths start
+      # /v3/, so a base URL ending in /v3 yields /v3/v3/... and a 404 that reads
+      # like the endpoint moved. SK's prose quotes the base as ".../smart-id-rp/v3/",
+      # which is the trap; the OpenAPI `servers` entry is what is used here.
+      base-url: ${PLAYGROUND_IDP_SMART_ID_BASE_URL:https://sid.demo.sk.ee/smart-id-rp}
+      # SK's published demo relying party. Not a secret — Smart-ID authenticates
+      # relying parties by this UUID plus a source IP registered in advance, so
+      # there is no client secret on this integration at all.
+      relying-party-uuid: ${PLAYGROUND_IDP_SMART_ID_RP_UUID:00000000-0000-4000-8000-000000000000}
+      # Displayed to the user in the Smart-ID app, in bold, above everything
+      # else. Must be pre-registered with SK; DEMO is the registered demo name.
+      relying-party-name: ${PLAYGROUND_IDP_SMART_ID_RP_NAME:DEMO}
+      # First slot of the signed ACSP_V2 payload. `smart-id-demo` on DEMO,
+      # `smart-id` in production. Configuration rather than a constant precisely
+      # because it differs per environment.
+      scheme-name: ${PLAYGROUND_IDP_SMART_ID_SCHEME_NAME:smart-id-demo}
+      # eIDAS qualified certificates only. This is what earns Smart-ID
+      # `acr: strong` where a password gets `weak`: a state-issued identity in a
+      # certificate, rather than proof that someone knows a secret.
+      certificate-level: QUALIFIED
+      # We choose these and SK signs with them; verification must then use the
+      # same pair. One setting read by both the request builder and the
+      # validator, rather than two constants free to drift apart. Case-sensitive:
+      # lower-case `rsassa-pss`, hyphenated `SHA-512`.
+      signature-algorithm: rsassa-pss
+      hash-algorithm: SHA-512
+      # How long SK may hold one long poll open (its own bounds are 1s-120s).
+      # Not the user's time budget — a poll that returns RUNNING is normal and
+      # we simply ask again.
+      poll-timeout: 20s
+      # This IS the user's budget: how long we keep asking before giving up.
+      session-max-duration: 2m
+      # SK's issuing CA certificates for THIS environment, checked explicitly
+      # rather than against the JVM default truststore. The JVM default would
+      # accept a certificate from any public CA, which for an identity assertion
+      # is no check at all.
+      truststore: classpath:smart-id/demo/smart-id-demo-truststore.p12
+      # PKCS#12 demands one even when the contents are public certificates.
+      # Not a secret; do not treat it as one.
+      truststore-password: changeit
+      # OCSP/CRL checking. Off is correct ONLY for DEMO, where certificates are
+      # not automatically published to OCSP and must be uploaded by hand at
+      # https://demo.sk.ee/upload_cert/.
+      #
+      # PRODUCTION MUST TURN THIS ON. A revoked certificate that still validates
+      # is the exact failure revocation exists to prevent.
+      revocation-check-enabled: false
     # Keycloak's identity inside this IdP. Hard-coded for the playground;
     # in a real system the secret would be generated and rotated.
     keycloak-broker:

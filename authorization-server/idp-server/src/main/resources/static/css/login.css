@@ -198,3 +198,54 @@ button.primary:disabled {
   color: var(--color-text-muted);
   text-align: center;
 }
+
+/*
+ * Smart-ID waiting state.
+ *
+ * The verification code is deliberately the largest element on the page. It is
+ * a security control, not a progress spinner: the user is being asked to
+ * compare it against their phone, and a number they have to hunt for is a
+ * number they will not check. Tabular figures so the four digits do not shift
+ * position as they render.
+ */
+.smart-id-waiting {
+  text-align: center;
+  padding: 1.25rem 0 0;
+}
+
+.smart-id-waiting-label {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.smart-id-code {
+  margin: 0.25rem 0 0.75rem;
+  font-size: 3rem;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: var(--color-brand);
+  font-variant-numeric: tabular-nums;
+}
+
+button.secondary {
+  width: 100%;
+  margin-top: 1rem;
+  padding: 0.625rem 1rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms;
+}
+
+button.secondary:hover {
+  border-color: var(--color-brand);
+  color: var(--color-text);
+}
