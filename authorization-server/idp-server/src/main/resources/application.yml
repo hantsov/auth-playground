@@ -8,20 +8,39 @@ spring:
   thymeleaf:
     cache: false  # dev convenience; revisit before any "production-ish" build
 
-  datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/idpdb}
-    username: ${SPRING_DATASOURCE_USERNAME:idpuser}
-    password: ${SPRING_DATASOURCE_PASSWORD:idppass123}
-    driver-class-name: org.postgresql.Driver
+  # No datasource, no JPA, no Flyway — and that absence is the design, not an
+  # omission. This server authenticates people; it does not store them. User
+  # data lives in user-data-master and is read over HTTP on the fly.
+  #
+  # That is the user-federation pattern (Keycloak's UserStorageProvider SPI,
+  # every Spring Security + LDAP deployment), and the trade it makes is worth
+  # knowing: the master becomes tier-0 infrastructure, because master down means
+  # nobody logs in anywhere.
 
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    show-sql: false
-
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
+  security:
+    oauth2:
+      client:
+        registration:
+          user-data-master:
+            provider: keycloak-services
+            client-id: ${PLAYGROUND_IDP_MASTER_CLIENT_ID:idp-server}
+            client-secret: ${PLAYGROUND_IDP_MASTER_CLIENT_SECRET:idp-server-secret}
+            authorization-grant-type: client_credentials
+            client-authentication-method: client_secret_basic
+            # The only scope combination this service is entitled to. Note that
+            # credentials:read is granted to exactly one client in the whole
+            # services realm — "only the IdP may see password hashes" is a config
+            # fact rather than a convention.
+            scope:
+              - credentials:read
+              - customer:read
+        provider:
+          keycloak-services:
+            # token-uri, NOT issuer-uri. `issuer-uri` performs OIDC discovery when
+            # the ClientRegistration is built, so this server would refuse to start
+            # whenever Keycloak is down — a hard startup coupling bought for
+            # nothing, since client_credentials needs exactly one endpoint.
+            token-uri: ${PLAYGROUND_IDP_KEYCLOAK_TOKEN_URI:http://localhost:8080/realms/playground-services/protocol/openid-connect/token}
 
 management:
   endpoints:
@@ -36,7 +55,6 @@ logging:
   level:
     org.springframework.security: INFO
     ee.authplayground.idpserver: DEBUG
-    org.flywaydb: INFO
 
 # Custom playground namespace. Keep all our config under one prefix so
 # nothing collides with Spring's own keys.
@@ -48,12 +66,15 @@ playground:
     # Local file holding the RSA private key (JWKS format). Gitignored.
     # In Docker, this folder is bind-mounted so the key survives rebuilds.
     signing-key-path: ${PLAYGROUND_IDP_SIGNING_KEY_PATH:./keys/signing-key.json}
+    # Where the golden record lives. Every user lookup this server performs
+    # goes here; there is no local fallback and deliberately no cache.
+    user-master:
+      base-url: ${PLAYGROUND_IDP_USER_MASTER_BASE_URL:http://localhost:9100}
     # Keycloak's identity inside this IdP. Hard-coded for the playground;
     # in a real system the secret would be generated and rotated.
     keycloak-broker:
       client-id: ${PLAYGROUND_IDP_KEYCLOAK_CLIENT_ID:kc-broker-client}
       client-secret: ${PLAYGROUND_IDP_KEYCLOAK_CLIENT_SECRET:kc-broker-secret}
-      # Phase 2 fills this in based on the realm's identity provider alias.
       # The brokering callback URL is fixed by Keycloak's URL scheme:
       #   {keycloak-base}/realms/{realm}/broker/{provider-alias}/endpoint
       redirect-uri: ${PLAYGROUND_IDP_KEYCLOAK_REDIRECT_URI:http://localhost:8080/realms/playground/broker/playground-idp/endpoint}

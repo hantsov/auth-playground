@@ -4,7 +4,7 @@ Things noted but deliberately deferred. Each item explains why it's not done so 
 
 ## Infrastructure
 
-- [ ] **Dockerize `idp-server`.** Today it runs locally via `./gradlew bootRun`; the rest of the stack is containerized. Adding a Dockerfile is mechanical — the design wrinkle is the OIDC issuer URL: it has to be reachable from both the user's browser and from inside Keycloak's container under the *same* hostname (the `iss` claim is checked exactly), which means picking a shared resolvable name or per-environment issuer overrides. Once dockerized, also bind-mount the `keys/` directory so the RSA signing key survives container rebuilds.
+- [ ] **Dockerize `idp-server` and `user-data-master-app`.** Today both run locally via `./gradlew bootRun`; the rest of the stack is containerized. Adding Dockerfiles is mechanical — the design wrinkle is the OIDC issuer URL: it has to be reachable from both the user's browser and from inside Keycloak's container under the *same* hostname (the `iss` claim is checked exactly), which means picking a shared resolvable name or per-environment issuer overrides. The same hostname duality applies to the master's expected-issuer and JWKS URL, and to idp-server's `base-url` for reaching the master. Once dockerized, also bind-mount idp-server's `keys/` directory so the RSA signing key survives container rebuilds.
 
 ## Authentication features
 

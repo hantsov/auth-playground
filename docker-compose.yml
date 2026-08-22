@@ -5,7 +5,7 @@ networks:
 volumes:
   keycloak-postgres-data:
   backend-postgres-data:
-  idp-postgres-data:
+  user-master-postgres-data:
 
 services:
   # Keycloak PostgreSQL Database
@@ -58,24 +58,32 @@ services:
     networks:
       - keycloak-network
 
-  # IdP PostgreSQL Database (used by idp-server — separate instance from
-  # backend-postgres and keycloak-postgres on purpose: the playground's
-  # pedagogy is that each component owns its own datastore.)
-  idp-postgres:
+  # User Data Master PostgreSQL Database (used by user-data-master-app —
+  # separate instance from backend-postgres and keycloak-postgres on purpose:
+  # the playground's pedagogy is that each component owns its own datastore.)
+  #
+  # This one holds the golden record: identity, person attributes, and every
+  # credential in the system. idp-server has no database at all — it reads from
+  # here over HTTP — which makes this tier-0: down means nobody logs in anywhere.
+  #
+  # Port 5434 because 5432 and 5433 are spoken for. 5433 was idp-postgres and is
+  # deliberately not recycled: a stale volume answering on a re-pointed port is
+  # an expensive way to lose an hour.
+  user-master-postgres:
     image: postgres:16
-    container_name: idp-postgres
+    container_name: user-master-postgres
     environment:
-      POSTGRES_DB: idpdb
-      POSTGRES_USER: idpuser
-      POSTGRES_PASSWORD: idppass123
+      POSTGRES_DB: masterdb
+      POSTGRES_USER: masteruser
+      POSTGRES_PASSWORD: masterpass123
     volumes:
-      - idp-postgres-data:/var/lib/postgresql/data
+      - user-master-postgres-data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - "5434:5432"
     networks:
       - keycloak-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U idpuser -d idpdb"]
+      test: ["CMD-SHELL", "pg_isready -U masteruser -d masterdb"]
       interval: 10s
       timeout: 5s
       retries: 5

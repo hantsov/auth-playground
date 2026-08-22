@@ -1,0 +1,65 @@
+server:
+  port: 9100
+
+spring:
+  application:
+    name: auth-playground-user-data-master
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5434/masterdb}
+    username: ${SPRING_DATASOURCE_USERNAME:masteruser}
+    password: ${SPRING_DATASOURCE_PASSWORD:masterpass123}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # jwk-set-uri, NOT issuer-uri, and the difference matters at startup:
+          # `issuer-uri` performs OIDC discovery when the JwtDecoder bean is
+          # built, so this service would refuse to start whenever Keycloak is
+          # down. We need exactly one endpoint — name it directly and keep the
+          # startup dependency out.
+          #
+          # The issuer is then validated as a literal string (see SecurityConfig),
+          # which is what `issuer-uri` would have bought us anyway.
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8080/realms/playground-services/protocol/openid-connect/certs}
+
+# Custom playground namespace. Keep all our config under one prefix so
+# nothing collides with Spring's own keys.
+playground:
+  master:
+    # Tokens reaching this service must have been minted by the services realm.
+    # NOT the `playground` realm: customer tokens have no business here, and a
+    # realm boundary in Keycloak is a full authorization-server boundary.
+    expected-issuer: ${PLAYGROUND_MASTER_EXPECTED_ISSUER:http://localhost:8080/realms/playground-services}
+    # ...and must be addressed to us. Spring does not validate `aud` unless you
+    # add the validator yourself; see SecurityConfig for why that matters.
+    expected-audience: ${PLAYGROUND_MASTER_EXPECTED_AUDIENCE:user-data-master}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    org.springframework.security: INFO
+    ee.authplayground.userdatamaster: DEBUG
+    org.flywaydb: INFO

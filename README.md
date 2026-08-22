@@ -6,27 +6,40 @@ This setup leverages the **identity brokering** pattern. New authentication meth
 
 ## What's in here
 
-- **Keycloak** as the realm-level authorization server. Pre-configured realm (`playground`), one public client (`react-client`), one upstream identity-provider entry (`playground-idp`), and a `USER` realm role. Brokered-only: Keycloak's own username/password login is disabled, and the browser auto-redirects to the upstream IdP.
-- **idp-server** — custom upstream identity provider built on Spring Authorization Server 7 (Java 25, Spring Boot 4). Owns the actual user authentication: username/password is live, Smart-ID is stubbed with placeholder fields. Federated to Keycloak as an OIDC provider; users live in its own Postgres.
+- **Keycloak** as the realm-level authorization server. Two realms: `playground` for customers (one public client `react-client`, one upstream identity-provider entry `playground-idp`, a `USER` realm role, brokered-only — Keycloak's own username/password login is disabled and the browser auto-redirects to the upstream IdP), and `playground-services` for machine-to-machine `client_credentials` traffic.
+- **idp-server** — custom upstream identity provider built on Spring Authorization Server 7 (Java 25, Spring Boot 4). Owns the actual user authentication: username/password is live, Smart-ID is stubbed with placeholder fields. Federated to Keycloak as an OIDC provider. **Has no database** — it reads credentials from user-data-master on the fly, which is the classic user-federation pattern.
+- **user-data-master** — Spring Boot 4 / Java 25 OAuth2 resource server holding the golden record: `users` (identity + person attributes) and `user_credentials` (password hashes, later Smart-ID bindings). Its `users.id` is the `sub` claim everything downstream keys on. Reachable only with a service token, and `credentials:read` is granted to exactly one client.
 - **resource-backend** — Spring Boot 4 / Java 25 OAuth2 resource server. Validates JWTs against Keycloak's JWKS, exposes a small REST API, persists data via Flyway-managed PostgreSQL.
 - **client-frontend** — React 19 / Vite 7 SPA acting as an OAuth2 public client. Uses Authorization Code + PKCE against Keycloak; talks to `keycloak-js` directly through a custom `AuthProvider` context.
-- Three PostgreSQL instances — one each for Keycloak's own state, idp-server's user accounts, and the resource-backend's app data.
+- Three PostgreSQL instances — one each for Keycloak's own state, the user data master, and the resource-backend's app data.
 
 ## Architecture
 
 ```
-   ┌──────────────────────┐                  ┌──────────────────────┐                  ┌──────────────────────┐
-   │    idp-postgres      │                  │  keycloak-postgres   │                  │   backend-postgres   │
-   │  (user accounts)     │                  │  (Keycloak state)    │                  │  (app data, Flyway)  │
-   └──────────▲───────────┘                  └──────────▲───────────┘                  └──────────▲───────────┘
-              │ JDBC                                    │ JDBC                                    │ JDBC
-              │                                         │                                         │
-   ┌──────────┴───────────┐   Auth Code      ┌──────────┴───────────┐                  ┌──────────┴───────────┐
-   │    idp-server        │   (broker)       │    Keycloak 26       │                  │  resource-backend    │
-   │ (Spring Auth Server, │◄─────────────────│  (auth server,       │                  │ (Spring Boot OAuth2  │
-   │  custom OIDC OP)     │                  │   brokered-only)     │                  │  resource server)    │
-   └──────────────────────┘                  └──────────▲───────────┘                  └──────────▲───────────┘
-                                                        │                                         │
+   ┌──────────────────────┐
+   │ user-master-postgres │
+   │ (identity + creds)   │
+   └──────────▲───────────┘
+              │ JDBC
+   ┌──────────┴───────────┐
+   │  user-data-master    │  golden record — the only store of users and
+   │  (resource server)   │  credentials anywhere in the system
+   └──────────▲───────────┘
+              │ client_credentials token from realm `playground-services`
+              │ scopes: credentials:read, customer:read
+              │
+   ┌──────────┴───────────┐   Auth Code      ┌──────────────────────┐                  ┌──────────────────────┐
+   │    idp-server        │   (broker)       │  keycloak-postgres   │                  │   backend-postgres   │
+   │ (Spring Auth Server, │◄───────────────┐ │  (Keycloak state)    │                  │  (app data, Flyway)  │
+   │  custom OIDC OP —    │                │ └──────────▲───────────┘                  └──────────▲───────────┘
+   │  no database)        │                │            │ JDBC                                    │ JDBC
+   └──────────────────────┘                │ ┌──────────┴───────────┐                  ┌──────────┴───────────┐
+                                           └─│    Keycloak 26       │                  │  resource-backend    │
+                                             │ realm: playground    │                  │ (Spring Boot OAuth2  │
+                                             │   — brokered-only    │                  │  resource server)    │
+                                             │ realm: playground-   │                  └──────────▲───────────┘
+                                             │   services — M2M     │                             │
+                                             └──────────▲───────────┘                             │
                                                         │ OIDC + PKCE                             │ Bearer JWT
                                                         │ (browser)                               │ REST /api/*
                                                         │                                         │
@@ -41,17 +54,21 @@ See [docs/tech-overview.md](docs/tech-overview.md) for the full request/token fl
 
 ```
 auth-playground/
-├── docker-compose.yml                       # full-stack orchestration
+├── docker-compose.yml                          # full-stack orchestration
 ├── authorization-server/
 │   ├── keycloak/
 │   │   └── realms/
-│   │       └── playground-realm.json        # imported on Keycloak startup
-│   └── idp-server/                          # custom upstream IdP (Spring Authorization Server)
+│   │       ├── playground-realm.json           # customers; imported on Keycloak startup
+│   │       └── playground-services-realm.json  # machine-to-machine clients
+│   └── idp-server/                             # custom upstream IdP (Spring Authorization Server)
+│       └── README.md
+├── internal-services/
+│   └── user-data-master-app/                   # golden record: users + credentials
 │       └── README.md
 ├── web-app/
-│   ├── client-frontend/                     # OAuth2 public client (React SPA)
+│   ├── client-frontend/                        # OAuth2 public client (React SPA)
 │   │   └── README.md
-│   └── resource-backend/                    # OAuth2 resource server (Spring Boot)
+│   └── resource-backend/                       # OAuth2 resource server (Spring Boot)
 │       └── README.md
 └── README.md
 ```
@@ -60,23 +77,28 @@ auth-playground/
 
 `authorization-server/idp-server/` is a custom Spring-based OIDC OpenID Provider that handles user authentication. Keycloak brokers to it as an upstream IdP — it remains the authorization server issuing tokens to the SPA, but the actual login (username/password, later Smart-ID) happens on the IdP. See its [README](authorization-server/idp-server/README.md) for details.
 
+`internal-services/` holds backend services that belong to neither the authorization tier nor the web app. Today that is `user-data-master-app`, which owns every user record and credential in the system; idp-server reads from it over HTTP and stores nothing itself. See its [README](internal-services/user-data-master-app/README.md).
+
 ## Quickstart for Local
 
-Infrastructure (Keycloak + all three databases) always runs in Docker. The idp-server, resource-backend, and frontend can each run locally or containerized, independently. **idp-server is not yet dockerized** — run it locally via Gradle for now.
+Infrastructure (Keycloak + all three databases) always runs in Docker. The idp-server, user-data-master-app, resource-backend, and frontend can each run locally or containerized, independently. **idp-server and user-data-master-app are not yet dockerized** — run them locally via Gradle for now.
 
 ### Start the infra
 
 ```bash
-docker compose up -d keycloak-postgres keycloak idp-postgres backend-postgres
+docker compose up -d keycloak-postgres keycloak user-master-postgres backend-postgres
 docker compose logs -f keycloak    # ready when it logs "Running the server in development mode"
 ```
 
-### Run backend + frontend outside Docker *(recommended for development)*
+### Run the apps outside Docker *(recommended for development)*
 
-Hot-reload on all three apps. Backend uses Spring DevTools, frontend uses Vite HMR, idp-server restarts when you edit its sources.
+Hot-reload on all four apps. Backends use Spring DevTools, frontend uses Vite HMR.
+
+Start `user-data-master-app` first: nobody can log in without it, since idp-server has no user store of its own.
 
 ```bash
-# After starting the infra — in three separate terminals:
+# After starting the infra — in four separate terminals:
+( cd internal-services/user-data-master-app && ./gradlew bootRun )
 ( cd authorization-server/idp-server && ./gradlew bootRun )
 ( cd web-app/resource-backend && ./gradlew bootRun )
 ( cd web-app/client-frontend && npm install && npm run dev )
