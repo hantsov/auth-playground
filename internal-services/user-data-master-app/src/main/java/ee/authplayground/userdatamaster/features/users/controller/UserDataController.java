@@ -52,14 +52,14 @@ public class UserDataController {
 
     /**
      * By national ID — <b>the resolution step for every inherent authentication
-     * method</b>, and Phase 2's registration lookup besides.
+     * method</b>, and Phase 3's registration lookup besides.
      * <p>
      * This is the counterpart to {@code UserCredentialController}'s credential
      * lookup, for methods that have no credential row. Smart-ID authentication
      * ends here: the certificate's subject DN yields the ETSI semantics
      * identifier, idp-server splits it into country + code, and this call
      * answers "which person is that, and do we know them?" A hit resolves to
-     * {@code users.id} and becomes the {@code sub}; a miss is Phase 2B's
+     * {@code users.id} and becomes the {@code sub}; a miss is Phase 3's
      * registration trigger.
      * <p>
      * That puts it on the login hot path, not merely in a registration flow.

@@ -7,8 +7,12 @@
 > to a stateless authentication front end that reads from it, and land at **exact behavioural parity
 > with today's username+password login**. No new user-facing features in this phase.
 >
-> **Followed by:** [Phase 2 — Smart-ID + registration](refactor-phase-2_smart-id-authn-with-user-registration.md).
-> Read this one first; Phase 2 depends on the schema and topology established here.
+> **Followed by** three phases that all build on the schema and topology established here — read this
+> one first:
+> [Phase 2 — Smart-ID authentication](refactor-phase-2_smart-id-notification-authn.md) (notification
+> flow, read-only), [Phase 3 — registration + onboarding](refactor-phase-3_user-registration-and-onboarding.md)
+> (the write path and the enricher), and [Phase 4 — device-link / QR](refactor-phase-4_smart-id-device-link-qr.md).
+> Phase 3 and Phase 4 both depend on Phase 2 but not on each other.
 >
 > **Self-contained.** Earlier analysis drafts in `docs/` are legacy and superseded — nothing in this
 > plan requires reading them, and nothing in them should be treated as current design.
@@ -101,7 +105,7 @@ we did not issue the certificate, SK did, and the chain and OCSP checks are what
                             ┌──────────────────────┐
                             │  user-data-master    │──── user-master-postgres
                             └───────^──────────────┘
-                                    │ client_credentials (Phase 2+)
+                                    │ client_credentials (Phase 3+)
                                     │
   ┌──────────┐   brokered   ┌───────┴──────────────┐   user tokens   ┌──────────────────┐
   │ Keycloak │<─────────────│   realm: playground  │────────────────>│ resource-backend │
@@ -167,8 +171,8 @@ standing in for "a separate internal AS" — it *is* that, deployed together.
 realm: playground             customers, brokered-only, react-client        (unchanged)
 realm: playground-services    machines, client_credentials only             (new)
   ├─ idp-server         → credentials:read, customer:read
-  ├─ resource-backend   → customer:read, customer:write          (registered now, used in Phase 2)
-  ├─ kc-enricher        → customer:read                          (Phase 2)
+  ├─ resource-backend   → customer:read, customer:write          (registered now, used in Phase 3)
+  ├─ kc-enricher        → customer:read                          (Phase 3)
   └─ user-data-master   (the audience — not a caller)
 ```
 
@@ -210,7 +214,7 @@ to `private_key_jwt`" is a good self-contained future phase with a real security
 ## 4. Schema
 
 Lives in **user-data-master**, not idp-server. This is the final shape — do not land an intermediate
-version with `password_hash` still on `users`, or Phase 2 becomes a second migration.
+version with `password_hash` still on `users`, or a later phase becomes a second migration.
 
 ```sql
 CREATE TABLE users (
@@ -265,7 +269,7 @@ Notes:
   universally the same thing as nationality. For our purposes they coincide. Comment the distinction
   rather than pretending it isn't there.
 - **`email_verified` is a column, not a constant.** §6 explains why at length. It lands in the first
-  migration because retrofitting it after Phase 2 starts collecting unverified addresses is precisely
+  migration because retrofitting it after Phase 3 starts collecting unverified addresses is precisely
   the ordering mistake this document exists to prevent.
 - `UNIQUE (type, identifier)` makes credential lookup a single indexed read for every *issued* method.
   Note that with only `PASSWORD` in play the identifier is always a login name, so this constraint now
@@ -287,7 +291,7 @@ Note the asymmetry: that is two rows because password is an *issued* method. Sma
 row — the `national_id` + `nationality` below are its whole binding.
 
 Give the seeded users a `national_id` + `nationality` now, using SK's published demo identity codes,
-so Phase 2A's happy path works with no data change:
+so Phase 2's happy path works with no data change:
 
 | username | `national_id` | `nationality` | derived ETSI identifier |
 |---|---|---|---|
@@ -358,8 +362,8 @@ scopes.
 | Endpoint | Scope | Notes |
 |---|---|---|
 | `GET /internal/credentials?type={t}&identifier={i}` | `credentials:read` **+** `customer:read` | Returns the credential (incl. hash) **and the user it belongs to**, in one response. **idp-server only.** |
-| `GET /internal/users/{id}` | `customer:read` | Person attributes by `sub`. Not on the Phase 1 login path — registered for resource-backend and Phase 2. |
-| `GET /internal/users/by-national-id/{nid}?nationality={c}` | `customer:read` | Phase 2 registration lookup. Takes both halves of §4's composite key. |
+| `GET /internal/users/{id}` | `customer:read` | Person attributes by `sub`. Not on the Phase 1 login path — registered for resource-backend and Phase 3. |
+| `GET /internal/users/by-national-id/{nid}?nationality={c}` | `customer:read` | The lookup every *inherent* method resolves through — Smart-ID login lands here in Phase 2 — and Phase 3's registration check. Takes both halves of §4's composite key. |
 
 #### One call, not two — and not for the reason it looks like
 
@@ -429,7 +433,7 @@ comment accurate and keep it.
 
 > **Phase 1 is deliberately not the final claim architecture.** The end state — idp-server emits only
 > `sub`/`acr`/`amr` and Keycloak's enricher supplies everything else — depends on an enricher that
-> does not exist until Phase 2. Email must keep travelling in the ID token here, or brokered login
+> does not exist until Phase 3. Email must keep travelling in the ID token here, or brokered login
 > falls through to Keycloak's "Update Account Information" page. Do not try to reach the end state in
 > one move.
 
@@ -503,7 +507,7 @@ user-data-master-app, resource-backend, client-frontend). Definition of done in 
 
 **Email is never a join key.** OIDC Core §5.7 makes `sub` + `iss` the only claims a relying party may
 rely on as a stable identifier. Auto-linking accounts on a matching email address is a documented
-account-takeover primitive with a CVE class attached. In Phase 2 a Smart-ID user will type an email
+account-takeover primitive with a CVE class attached. In Phase 3 a Smart-ID user will type an email
 into a form with no mailbox verification; joining on it would let anyone holding any Smart-ID inherit
 an existing account. Collect it. Never join on it. Hence `email` is not `UNIQUE` in §4 — the schema
 should make the wrong thing hard, not just discouraged.
@@ -511,7 +515,7 @@ should make the wrong thing hard, not just discouraged.
 **`email_verified` must stop being a hardcoded `true`.** `OidcClaimsCustomizer` currently emits
 `claims.claim("email_verified", true)` unconditionally, and the realm sets `"trustEmail": true` on
 the `playground-idp` provider. That is fine today because seeded users have known-good addresses. The
-moment Phase 2 collects one from a form it becomes an assertion we never performed, and Keycloak is
+moment Phase 3 collects one from a form it becomes an assertion we never performed, and Keycloak is
 configured to believe it. `users.email_verified` (§4) exists precisely so the claim can carry a real
 value; emit that. Two lines now; nasty later.
 
@@ -520,7 +524,7 @@ One nuance not to gloss over, because it will otherwise be discovered at the wor
 this provider. So an honest `email_verified: false` travelling up from idp-server does not, by itself,
 stop Keycloak marking the shadow user's email verified. Fixing the IdP's claim is still the right move
 here — an IdP must not assert what it did not check, regardless of what its relying party does with
-the assertion — but closing the loop end-to-end is a Phase 2 concern that arrives with the first
+the assertion — but closing the loop end-to-end is a Phase 3 concern that arrives with the first
 form-collected address. Leave `trustEmail` as it is and put a comment in the realm JSON saying why,
 so the second half of the fix is findable rather than rediscovered.
 
@@ -579,7 +583,7 @@ country code silently stops matching the one you searched for.
 | # | Question | Decision |
 |---|---|---|
 | 1 | Module location — repo root, or a new `internal-services/` directory? | **`internal-services/user-data-master-app/`.** Root folders name architectural tiers, not deployables; the master gets its own tier rather than being wedged into one it does not belong to. §1.1. |
-| 2 | Does resource-backend get its services-realm client registered now or in Phase 2? | **Now.** Free, and keeps realm-JSON edits in one place. It goes unused until Phase 2. |
+| 2 | Does resource-backend get its services-realm client registered now or later? | **Now.** Free, and keeps realm-JSON edits in one place. It goes unused until Phase 3. |
 | 3 | One combined lookup, or credential + user fetched separately? | **One** — but not for the stated reason, which turns out not to hold. §1.4. |
 | 5 | Keep `username` on `users`? | **Keep.** A Smart-ID-only user has no credential rows at all and still wants a display handle, and its login-identifier role has moved to `user_credentials.identifier` regardless. Comment the apparent duplication. |
 | 11 | Does Smart-ID get a `user_credentials` row? | **No.** It is an *inherent* method — the state issued the identity, SK holds the key, and `users.national_id` + `users.nationality` are the whole binding. A row would duplicate a derivable identifier and imply an enrolment step that does not exist. `user_credentials` holds *issued* credentials only. See §2. |
@@ -594,5 +598,5 @@ country code silently stops matching the one you searched for.
 
 | # | Question | Notes |
 |---|---|---|
-| 10 | Does anything need to stop `"trustEmail": true` overriding an honest `email_verified: false`? | Not this phase — every seeded address is genuinely ours. Keycloak's `trustEmail` makes it skip its *own* verification for addresses from this provider, so an honest `false` travelling up does not by itself stop the shadow user being marked verified. Becomes real with Phase 2's first form-collected email. See §6. |
+| 10 | Does anything need to stop `"trustEmail": true` overriding an honest `email_verified: false`? | Not this phase — every seeded address is genuinely ours. Keycloak's `trustEmail` makes it skip its *own* verification for addresses from this provider, so an honest `false` travelling up does not by itself stop the shadow user being marked verified. Becomes real with Phase 3's first form-collected email. See §6. |
 | 11 | Does the SPA need `acr`/`amr` surfaced in the Token Inspector? | They are in the token now and nothing displays them. Cheap to add, and it makes the Phase 2 payoff (same `sub`, two assurance levels) visible without decoding a JWT by hand. Out of scope here — client-frontend is unchanged this phase. |

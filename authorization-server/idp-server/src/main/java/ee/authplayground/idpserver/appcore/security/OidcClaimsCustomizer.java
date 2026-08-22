@@ -110,7 +110,7 @@ public class OidcClaimsCustomizer {
                 claims.claim("email", user.getEmail());
                 // The real value, from the master — not the hardcoded `true` this
                 // used to emit. That literal was harmless only while every address
-                // was a seeded fixture we controlled. From Phase 2 an address
+                // was a seeded fixture we controlled. From Phase 3 an address
                 // arrives from a form with no mailbox verification behind it, and
                 // asserting `true` would be claiming to have performed a check
                 // nobody performed.
@@ -118,7 +118,7 @@ public class OidcClaimsCustomizer {
                 // Note this is only half the fix: the realm sets `trustEmail: true`
                 // on the playground-idp provider, which makes Keycloak skip its own
                 // verification for addresses from this IdP regardless of what we
-                // say here. Closing that loop belongs with Phase 2's first
+                // say here. Closing that loop belongs with Phase 3's first
                 // form-collected address.
                 claims.claim("email_verified", user.isEmailVerified());
             }

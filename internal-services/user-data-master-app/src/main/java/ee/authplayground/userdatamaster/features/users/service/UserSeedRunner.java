@@ -45,7 +45,7 @@ public class UserSeedRunner implements CommandLineRunner {
     @Transactional
     public void run(String... args) {
         // The national IDs are Smart-ID's published demo identity codes. Seeding
-        // them now costs nothing and means Phase 2A's happy path works against a
+        // them now costs nothing and means Phase 2's happy path works against a
         // known identity with no data change and no writes at all: the national
         // ID *is* the Smart-ID binding, so these two people can already
         // authenticate that way the moment the protocol layer exists.
@@ -74,7 +74,7 @@ public class UserSeedRunner implements CommandLineRunner {
         user.setEmail(email);
         // These addresses are fixtures we control, which is the only circumstance
         // under which asserting verification is honest. A form-collected address
-        // in Phase 2 gets `false` until something actually verifies it.
+        // in Phase 3 gets `false` until something actually verifies it.
         user.setEmailVerified(true);
         user.setGivenName(givenName);
         user.setFamilyName(familyName);
