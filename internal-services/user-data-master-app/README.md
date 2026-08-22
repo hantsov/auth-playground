@@ -17,7 +17,7 @@ Three ownership rules follow:
 
 | Owner | Owns | Why here |
 |---|---|---|
-| **user-data-master** | `users` (identity + person attributes), `user_credentials` (password hashes, later Smart-ID bindings) | Any service may need person data; exactly one service may hand out credential material. |
+| **user-data-master** | `users` (identity + person attributes), `user_credentials` (issued credentials — password hashes today) | Any service may need person data; exactly one service may hand out credential material. |
 | **idp-server** | nothing persistent about users | Authenticates. Owns *authentication logic*, not user data. |
 | **Keycloak** | roles, sessions, shadow users | Authorization projection + SSO. Not a customer master. |
 | **resource-backend** | `custom_data`, app feature data | App-owned state. |
@@ -35,17 +35,30 @@ We merge them into one service. That is the interesting simplification here — 
 
 ## Schema
 
-Two tables. The split between them is the whole point: `users` answers "who is this person", `user_credentials` answers "what did they present to prove it". One human, one `users` row, N ways to authenticate.
+Two tables. `users` answers "who is this person"; `user_credentials` answers "what did we issue them to prove it with".
+
+The split is not symmetric, and that asymmetry is the interesting part. Authentication methods come in two shapes:
+
+- **Inherent** — usable because of *who you are*. An external authority holds the authenticator and has already done the identity proofing; we only need the identifier on the person record. **Smart-ID** is the example: the state issued the identity, SK holds the key, and `users.national_id` is the entire binding. Nothing to enrol, nothing to store, nothing for us to revoke.
+- **Issued** — usable because *we gave you something*. We hold a secret, so there is a row, an enrolment step, and a revocation lever. Passwords today; TOTP or WebAuthn would land here too.
+
+`user_credentials` is the table of **issued** credentials. The test for any method added later: *does authenticating require something we store?* Then it is a row. If not, it is an attribute on `users`.
+
+So a Smart-ID-only person has **zero** credential rows — which is exactly what a separate table buys, and what a `users.password_hash` column could never express: a nullable column would conflate "no password yet" with "authenticates by other means".
+
+An earlier draft gave Smart-ID a credential row keyed on the ETSI identifier. That was wrong twice over: the identifier is derivable from `nationality + national_id`, so the row was duplication with a synchronisation problem — and it implied an opt-in step that does not exist.
 
 `users.id` is minted here and becomes the **`sub` claim everywhere downstream** — idp-server asserts it, Keycloak links its shadow user to it, resource-backend keys its rows on it. It is the only identifier in the system that is stable by construction.
 
-Three schema decisions worth knowing, all commented at length in `V1__init_user_master.sql`:
+Four schema decisions worth knowing, all commented at length in `V1__init_user_master.sql`:
 
 - **`email` is not `UNIQUE` and never a join key.** OIDC Core §5.7 makes `sub` + `iss` the only claims a relying party may rely on as a stable identifier. Auto-linking accounts on a matching email is a documented account-takeover primitive — and in Phase 2 a Smart-ID user will type an email into a form with no mailbox verification. The schema should make the wrong thing hard.
 - **`UNIQUE (nationality, national_id)`, not `UNIQUE (national_id)`.** National ID numbers are unique *within a country*. Smart-ID's own demo set proves it: `PNOEE-40404040009` and `PNOLT-40404040009` are different people sharing a number.
 - **`email_verified` is a column, not a constant.** idp-server used to emit `email_verified: true` as a hardcoded literal. Harmless while every address was a seeded fixture; an assertion nobody performed the moment one arrives from a form.
 
-The national ID appears in two places, in two roles: `users.national_id` (bare code, a person attribute) and `user_credentials.identifier` on `SMART_ID` rows (the ETSI semantics identifier `PNOEE-40404040009`, a lookup index). The second is derived from `"PNO" + nationality + "-" + national_id` and stored in derived form so credential lookup stays one indexed read.
+- **`secret_hash` is nullable, but a `CHECK` constraint keeps it honest.** `password_requires_secret` enforces that a `PASSWORD` row must carry a hash. The column stays nullable so a future issued method with something other than a comparable secret has somewhere to go; the constraint means today's only type cannot be half-populated. Enforced in the database rather than in application code because a constraint holds for every writer, including the psql session someone opens at 2am.
+
+The national ID lives in exactly **one** place: `users.national_id`, paired with `users.nationality`. The ETSI semantics identifier (`PNOEE-40404040009`) is derived when needed and never stored — Smart-ID authentication splits the incoming identifier into its two halves and matches on the indexed `(nationality, national_id)` pair.
 
 ## API
 
@@ -53,13 +66,15 @@ Every endpoint requires a `client_credentials` token from Keycloak's `playground
 
 | Endpoint | Scope | Notes |
 |---|---|---|
-| `GET /internal/credentials?type={t}&identifier={i}` | `credentials:read` **+** `customer:read` | The credential **and its owner**, in one response. idp-server only. |
+| `GET /internal/credentials?type={t}&identifier={i}` | `credentials:read` **+** `customer:read` | The credential **and its owner**, in one response. The **issued**-method login path. idp-server only. |
 | `GET /internal/users/{id}` | `customer:read` | Person attributes by `sub`. |
-| `GET /internal/users/by-national-id/{nid}?nationality={c}` | `customer:read` | Phase 2 registration lookup. Takes both halves of the composite key. |
+| `GET /internal/users/by-national-id/{nid}?nationality={c}` | `customer:read` | The **inherent**-method login path — Smart-ID resolves here — and Phase 2's registration lookup. Takes both halves of the composite key. |
+
+Note the two login paths are deliberately different endpoints, because the two method shapes are different: one fetches something we stored, the other identifies a person from something the state issued. They converge on the same `users.id`, which is what lets one person reach one `sub` by either route.
 
 ### Why credentials are read, not verified here
 
-The master returns the hash; **idp-server does the BCrypt compare**. A `POST /credentials/verify` would drag authentication policy — lockout, attempt counting, `acr` determination, what counts as success — into this service or split it across both. It is also asymmetric for no reason: the Smart-ID path has no secret to verify at all, it is a pure lookup. Read-only lookup makes both credential types work the same way.
+The master returns the hash; **idp-server does the BCrypt compare**. A `POST /credentials/verify` would drag authentication policy — lockout, attempt counting, `acr` determination, what counts as success — into this service or split it across both. Read-only lookup leaves every authentication decision in the one service whose job that is.
 
 Keep this a **store**, not a verifier.
 
@@ -103,7 +118,7 @@ Listens on **http://localhost:9100**. Start it *before* idp-server — nobody ca
 | `conan` | `conan123` | `40404040009` | `EE` | `PNOEE-40404040009` |
 | `matrix` | `matrix123` | `50001029996` | `EE` | `PNOEE-50001029996` |
 
-The national IDs are Smart-ID's published demo identity codes, seeded now so Phase 2's happy path works with no data change. Both users get `email_verified = true` — their addresses are fixtures we control, which is the only circumstance under which asserting verification is honest.
+The national IDs are Smart-ID's published demo identity codes, seeded now so Phase 2's happy path works with **no data change and no writes** — the national ID *is* the Smart-ID binding, so both users can already authenticate that way the moment the protocol layer exists. Both get `email_verified = true`; their addresses are fixtures we control, which is the only circumstance under which asserting verification is honest.
 
 Passwords are hashed by the current encoder at runtime rather than frozen into a migration at a fixed cost factor.
 

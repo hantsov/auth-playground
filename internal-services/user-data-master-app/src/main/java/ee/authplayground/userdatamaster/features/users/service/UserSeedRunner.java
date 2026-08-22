@@ -23,10 +23,14 @@ import org.springframework.transaction.annotation.Transactional;
  * algorithm version forever; this way passwords are re-hashed at the encoder's
  * current settings on every fresh database.
  * <p>
- * <b>Two rows per person, not one.</b> That is the credential split made
- * concrete: a {@code users} row saying who they are, and a {@code PASSWORD}
- * credential saying how they prove it. Adding Smart-ID in Phase 2 is another
- * credential row, not a schema change.
+ * <b>Two rows per person here, but not two in general.</b> That is the
+ * credential split made concrete: a {@code users} row saying who they are, and
+ * a {@code PASSWORD} credential — an <i>issued</i> method — saying what we gave
+ * them to prove it with.
+ * <p>
+ * Smart-ID adds neither. It is an inherent method: the {@code national_id} and
+ * {@code nationality} seeded below are the entire binding, and Phase 2 turns
+ * them on with no data change and no new row. See {@code UserCredentialType}.
  */
 @Component
 @RequiredArgsConstructor
@@ -42,9 +46,9 @@ public class UserSeedRunner implements CommandLineRunner {
     public void run(String... args) {
         // The national IDs are Smart-ID's published demo identity codes. Seeding
         // them now costs nothing and means Phase 2A's happy path works against a
-        // known identity with no data change — the Smart-ID credential row can be
-        // added to a person who already exists, which is exactly the flow being
-        // proven before the registration state machine goes on top.
+        // known identity with no data change and no writes at all: the national
+        // ID *is* the Smart-ID binding, so these two people can already
+        // authenticate that way the moment the protocol layer exists.
         seed("conan", "40404040009", "EE", "conan@playground.local", "Conan", "Barbarian", "conan123");
         seed("matrix", "50001029996", "EE", "matrix@playground.local", "John", "Matrix", "matrix123");
     }

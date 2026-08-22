@@ -35,8 +35,13 @@ public class UserMasterClient {
     }
 
     /**
-     * The login-path lookup. One call, returning the credential to verify and
-     * the person to describe.
+     * The <b>password</b> login-path lookup. One call, returning the credential
+     * to verify and the person to describe.
+     * <p>
+     * Smart-ID does not come through here — it is an inherent method with no
+     * credential row, and resolves against the master's national-ID endpoint
+     * instead. Phase 2 adds that call alongside this one rather than
+     * generalising it.
      * <p>
      * Both halves are needed at different moments — the hash during the form
      * POST, the person attributes during token issuance — and those are

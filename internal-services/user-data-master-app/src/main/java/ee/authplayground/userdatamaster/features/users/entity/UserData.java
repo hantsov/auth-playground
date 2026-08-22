@@ -40,10 +40,16 @@ public class UserData {
     /**
      * The bare national identity code, e.g. {@code 40404040009}.
      * <p>
-     * Not the ETSI semantics identifier — that is
-     * {@code "PNO" + nationality + "-" + nationalId} and lives on the
-     * {@code SMART_ID} credential row, where it serves as a lookup index rather
-     * than a person attribute. Same number, two roles, two places.
+     * A person attribute <b>and</b> the binding for every inherent
+     * authentication method. Smart-ID resolves against it: the certificate's
+     * subject DN carries the ETSI semantics identifier
+     * ({@code PNOEE-40404040009}), which is split into country + code and
+     * matched on {@code (nationality, nationalId)}. The combined form is
+     * derived when needed — see {@link #toSemanticsIdentifier()} — and never
+     * stored, because there is no credential row for it to live on.
+     * <p>
+     * A person with no national ID simply cannot use an inherent method. See
+     * {@link UserCredentialType} for why that class of method has no row.
      */
     @Column(name = "national_id", length = 50)
     private String nationalId;
@@ -61,7 +67,8 @@ public class UserData {
      * now belongs to {@code user_credentials.identifier} on the PASSWORD row.
      * <p>
      * Kept even though a PASSWORD credential duplicates it, because a
-     * Smart-ID-only user has no PASSWORD row and still wants a name to show.
+     * Smart-ID-only user has <b>no credential rows at all</b> and still wants a
+     * name to show.
      */
     @Column(name = "username", unique = true, length = 100)
     private String username;
@@ -112,10 +119,12 @@ public class UserData {
      * The ETSI semantics identifier for this person — {@code PNOEE-40404040009}
      * — or {@code null} if either half is missing.
      * <p>
-     * Derived rather than stored on this entity, because on {@code users} the
-     * two halves are the person attributes and the combined form is a
-     * convenience. Where it is a lookup key (the {@code SMART_ID} credential
-     * row) it is stored, so that lookup stays a single indexed read.
+     * Always derived, never stored. The two halves are the person attributes;
+     * the combined form exists only to be compared against what a certificate
+     * presents, and lookup goes the other way anyway — incoming identifier is
+     * split, then matched on the indexed {@code (nationality, national_id)}
+     * pair. Storing the combined form as well would be duplication with a
+     * synchronisation problem attached.
      */
     public String toSemanticsIdentifier() {
         if (nationality == null || nationalId == null) {

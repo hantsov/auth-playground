@@ -22,8 +22,16 @@ import org.springframework.stereotype.Service;
  * The alternative — posting the plaintext to the master and getting a yes/no —
  * would drag authentication policy (lockout, attempt counting, {@code acr}
  * determination, what counts as success) into a service whose job is to hold
- * records. It is also asymmetric for no reason: the Smart-ID path has no secret
- * to verify at all, only a lookup. Reading makes both methods work the same way.
+ * records.
+ *
+ * <h2>This is the password path only</h2>
+ * Password is an <i>issued</i> credential: we hold a hash, so there is a row to
+ * fetch. Smart-ID is <i>inherent</i> — the state issued the identity, SK holds
+ * the key, and the national ID on the person record is the whole binding. It
+ * resolves through the master's national-ID lookup instead of a credential
+ * lookup, and never reaches this class. Both paths converge on the same
+ * {@code users.id}, which is what lets one person arrive at one {@code sub} by
+ * either method.
  *
  * <h2>What "username" means here</h2>
  * The parameter is whatever was typed into the login form, and it is matched
@@ -47,10 +55,14 @@ public class UserDataDetailsService implements UserDetailsService {
                 .orElseThrow(() -> new UsernameNotFoundException("No PASSWORD credential for: " + loginName));
 
         if (credential.secretHash() == null) {
-            // A PASSWORD row without a hash is a broken record, not a user who
-            // "has no password" — a Smart-ID-only person simply has no PASSWORD
-            // row at all. Refuse rather than hand Spring Security a null to
-            // compare against.
+            // Belt and braces: the master's `password_requires_secret` CHECK
+            // constraint makes this unreachable, because a PASSWORD row cannot
+            // exist without a hash. Kept because the alternative failure — handing
+            // Spring Security a null to compare against — is silent and awful.
+            //
+            // Note this is NOT the "user has no password" case. Someone who only
+            // uses Smart-ID has no credential row at all, so the lookup 404s and
+            // we never get here.
             throw new UsernameNotFoundException("PASSWORD credential has no hash: " + loginName);
         }
 

@@ -17,9 +17,9 @@ import java.util.UUID;
  * That is also why this response requires both {@code credentials:read} and
  * {@code customer:read} — it is one read returning two kinds of data.
  *
- * @param secretHash BCrypt for {@code PASSWORD}, {@code null} for {@code SMART_ID}.
- *                   The master hands this out rather than verifying it; see
- *                   {@code UserCredentialController} for the reasoning.
+ * @param secretHash BCrypt for {@code PASSWORD}. The master hands this out
+ *                   rather than verifying it; see {@code UserCredentialController}
+ *                   for the reasoning.
  */
 public record UserCredentialResponse(
         UUID id,

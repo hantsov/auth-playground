@@ -12,9 +12,9 @@ import java.util.UUID;
  * service's reading of it. If the master adds a field, nothing here breaks —
  * unknown properties are ignored.
  *
- * @param secretHash BCrypt hash for {@code PASSWORD}, {@code null} for
- *                   {@code SMART_ID}. <b>This service performs the comparison</b>;
- *                   the master never sees a plaintext password.
+ * @param secretHash BCrypt hash for {@code PASSWORD}. <b>This service performs
+ *                   the comparison</b>; the master never sees a plaintext
+ *                   password.
  * @param user       person attributes, carried forward onto the authenticated
  *                   principal so token issuance needs no second call.
  */

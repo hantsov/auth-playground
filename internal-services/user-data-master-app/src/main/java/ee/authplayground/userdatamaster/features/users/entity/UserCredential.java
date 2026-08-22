@@ -19,16 +19,22 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * One way a person can prove who they are.
+ * Something we issued a person so they can prove who they are.
  * <p>
- * Splitting this off {@code users} is what lets two authentication methods
- * resolve to one identity. Before the split, {@code users.password_hash} was
- * {@code NOT NULL} — there was no way to express "this human authenticates by
- * Smart-ID" without contorting the schema.
+ * Splitting this off {@code users} is what lets a person hold several
+ * authentication methods — or <b>none at all</b>. Before the split,
+ * {@code users.password_hash} was {@code NOT NULL}, so every identity was
+ * forced to have a password; a nullable column would have been no better, since
+ * it conflates "no password yet" with "authenticates by other means".
+ * <p>
+ * Note the asymmetry this table is built around: it holds only <b>issued</b>
+ * credentials. An inherent method like Smart-ID has no row here at all — the
+ * state issued the identity, SK holds the key, and {@code users.national_id} is
+ * the whole binding. See {@link UserCredentialType} for the full distinction
+ * and the test to apply to any new method.
  * <p>
  * The {@code (type, identifier)} pair is unique, which makes credential lookup
- * a single indexed read for every method: password login and Smart-ID login
- * become the same query with a different {@code type}.
+ * a single indexed read.
  */
 @Entity
 @Table(name = "user_credentials")
@@ -42,8 +48,8 @@ public class UserCredential {
     private UUID id;
 
     /**
-     * The identity this credential proves. Many credentials, one person — that
-     * is the whole point of the table.
+     * The identity this credential proves. Many credentials, one person — and
+     * legitimately zero, for someone who only ever uses an inherent method.
      */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
@@ -59,16 +65,24 @@ public class UserCredential {
     private UserCredentialType type;
 
     /**
-     * What the person presents to identify themselves under this method:
-     * the login name for {@code PASSWORD}, the ETSI semantics identifier
-     * ({@code PNOEE-40404040009}) for {@code SMART_ID}.
+     * What the person presents to identify themselves under this method — the
+     * login name, for {@code PASSWORD}.
+     * <p>
+     * Deliberately not {@code users.username}, even though the two are equal
+     * for seeded users: the handle on the person row is for display and may
+     * change freely, while this is the login key and does not.
      */
     @Column(name = "identifier", nullable = false, length = 255)
     private String identifier;
 
     /**
-     * BCrypt hash for {@code PASSWORD}; {@code null} for {@code SMART_ID},
-     * which has no secret on our side at all.
+     * BCrypt hash for {@code PASSWORD}.
+     * <p>
+     * Nullable in the schema so a future issued method with something other
+     * than a comparable secret has somewhere to go — but the
+     * {@code password_requires_secret} CHECK constraint means a PASSWORD row
+     * can never exist without one. The rule lives in the database rather than
+     * here because a constraint holds for every writer, not just this class.
      * <p>
      * Note this leaves the service on the wire, to exactly one caller — see
      * {@code UserCredentialController} for why the master hands out hashes
@@ -80,9 +94,13 @@ public class UserCredential {
 
     /**
      * Per-credential, deliberately distinct from {@code users.enabled}.
-     * Revoking one authentication method is not the same act as disabling a
-     * person, and conflating them means you cannot do the first without the
-     * second.
+     * Revoking one issued method is not the same act as disabling a person,
+     * and conflating them means you cannot do the first without the second.
+     * <p>
+     * There is no equivalent lever for an inherent method, and that is correct
+     * rather than a gap: we did not issue the certificate and we cannot revoke
+     * it. SK does that, and the certificate-chain and OCSP checks catch it.
+     * Locally the levers are {@code users.enabled} or clearing the identifier.
      */
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;

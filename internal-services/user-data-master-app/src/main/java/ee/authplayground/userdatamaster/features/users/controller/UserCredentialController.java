@@ -21,16 +21,20 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <h2>Why the master hands out hashes instead of verifying them</h2>
  * The obvious alternative is {@code POST /internal/credentials/verify}: send the
- * plaintext, get a yes/no. It is rejected for two reasons.
- * <p>
- * It drags authentication policy — lockout, attempt counting, {@code acr}
- * determination, what even counts as success — into the master, or worse,
- * splits it across both services. And it is asymmetric for no reason: the
- * Smart-ID path has no secret to verify at all, it is a pure lookup. Read-only
- * lookup makes both credential types work the same way, and leaves every
- * authentication decision in the one service whose job that is.
+ * plaintext, get a yes/no. It is rejected because it drags authentication
+ * policy — lockout, attempt counting, {@code acr} determination, what even
+ * counts as success — into the master, or worse, splits it across both
+ * services. Read-only lookup leaves every authentication decision in the one
+ * service whose job that is.
  * <p>
  * The master is a <b>store</b>, not a verifier.
+ *
+ * <h2>Only issued credentials pass through here</h2>
+ * This endpoint exists for methods where we hold something to compare against.
+ * An inherent method like Smart-ID never reaches it: there is no secret and no
+ * row, so authentication resolves against the person record instead, via
+ * {@code UserDataController}'s national-ID lookup. See {@code UserCredentialType}
+ * for the distinction.
  *
  * <h2>The cost, stated plainly</h2>
  * Password hashes cross a network hop. Two controls would normally cover that;
@@ -85,9 +89,12 @@ public class UserCredentialController {
         return userCredentialRepository.findByTypeAndIdentifierWithUser(type, identifier)
                 .map(UserCredentialResponse::from)
                 .map(ResponseEntity::ok)
-                // 404 rather than an empty 200: "no such credential" is a distinct
-                // outcome from "here is a credential with no secret", which is what
-                // a legitimate SMART_ID row looks like.
+                // 404 rather than an empty 200, and the caller must treat it exactly
+                // like a bad password — never as a distinguishable error, or the
+                // endpoint becomes a user-enumeration oracle for whoever holds the
+                // scope. Note that "this person has no password" is a perfectly
+                // ordinary state: someone who only ever uses Smart-ID has no
+                // credential rows at all.
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "No credential for type=" + type + " identifier=" + identifier));
     }

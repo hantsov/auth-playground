@@ -25,9 +25,10 @@ Today the identity story is confused in three specific ways:
    shadow user to is a mutable display string. Renaming a user breaks the link. The javadocs on
    `UserData` and `OidcClaimsCustomizer` both claim otherwise; both are wrong today.
 
-2. **Identity and credentials are the same row.** `users.password_hash` is `NOT NULL`. There is no
-   way to express "this human authenticates by Smart-ID" without contorting the schema, and no way
-   for two authentication methods to resolve to one identity.
+2. **Identity and credentials are the same row.** `users.password_hash` is `NOT NULL`, so every
+   identity is forced to have a password. There is no way to express "this human authenticates by
+   Smart-ID and holds nothing we issued" without contorting the schema, and no way for two
+   authentication methods to resolve to one identity.
 
 3. **idp-server owns user data it has no business owning.** `email`, `given_name`, `family_name` are
    person attributes. Many services will eventually want them. Putting them behind the login server
@@ -50,24 +51,42 @@ Four owners, no overlapping facts. Every row below has a reason it cannot live a
 
 | Owner | Owns | Why here |
 |---|---|---|
-| **user-data-master** | `users` (identity + person attributes), `user_credentials` (password hashes, Smart-ID bindings) | Golden record. Any service may need person data; exactly one service may hand out credential material. |
+| **user-data-master** | `users` (identity + person attributes), `user_credentials` (issued credentials — password hashes today) | Golden record. Any service may need person data; exactly one service may hand out credential material. |
 | **idp-server** | Nothing persistent about users | Authenticates. Reads credentials, verifies them, asserts the result. Owns *authentication logic*, not user data. |
 | **Keycloak** | Roles, sessions, shadow users | Authorization projection + SSO. Not a customer master. |
 | **resource-backend** | `custom_data`, app feature data | App-owned state, per AGENTS.md. Unchanged in this phase. |
 
-The one apparent duplication is deliberate and should be commented in the schema: the **national ID
-appears in two places** — `users.national_id` (a person attribute — compliance reads it, statements
-print it) and `user_credentials.identifier` for `SMART_ID` rows (the index you look up to answer
-"who just authenticated"). Attribute vs. index.
+There is **no duplication** of the national ID, and getting to that took one wrong turn worth
+recording. An earlier draft of this plan gave Smart-ID a `user_credentials` row keyed on the ETSI
+semantics identifier (`PNOEE-40404040009`), reasoning that credential lookup should be one indexed
+read for every method. That was wrong twice over, and the correction is the sharpest idea in this
+document.
 
-They are not the *same string*, which is the part to get right. The person attribute is the bare code
-(`40404040009`) paired with `users.nationality` (`EE`); the credential identifier is the ETSI
-semantics identifier (`PNOEE-40404040009`), because that is the exact token Smart-ID hands back in the
-certificate subject and the only sane thing to index a credential lookup on. The identifier is
-derivable — `"PNO" + nationality + "-" + national_id` — so store the derived form on the credential
-row rather than reassembling it per lookup, and comment the relationship at both ends. The two cannot
-drift in practice: if someone's issuing country changed it would be a new identity document, and
-therefore a new credential row rather than an edit to an existing one.
+**Authentication methods come in two shapes, and only one of them needs a row.**
+
+| | Inherent | Issued |
+|---|---|---|
+| Usable because | of *who you are* | *we gave you something* |
+| Who holds the authenticator | an external authority (the state, via SK) | us |
+| What we store | an identifier on the **person** row | a secret, in **`user_credentials`** |
+| Enrolment | none — nothing to opt into | yes |
+| Local revocation | none, and correctly so | per-credential |
+| Examples | Smart-ID, Mobile-ID, eID card | password today; TOTP, WebAuthn later |
+
+Smart-ID is inherent. The state proved the identity, SK holds the key, and `users.national_id` +
+`users.nationality` are the entire binding — the ETSI identifier is *derivable* from them, so a row
+storing it would be duplication with a synchronisation problem attached. Worse, a credential row
+implies an enrolment step that does not exist: if your record carries a national ID and you hold a
+Smart-ID account, you can authenticate. Nothing is opted into.
+
+**The test for any method added later:** does authenticating require something we store? Then it is a
+row in `user_credentials`. If not, it is an attribute on `users`.
+
+Two things fall out of this for free. A Smart-ID-only person has **zero** credential rows — which is
+exactly what a separate table buys and what a nullable `users.password_hash` could never express,
+since that column would conflate "no password yet" with "authenticates by other means". And
+revocation: you cannot locally revoke an inherent method, and that is a property rather than a gap —
+we did not issue the certificate, SK did, and the chain and OCSP checks are what catch a revoked one.
 
 ### Topology
 
@@ -212,12 +231,16 @@ CREATE TABLE users (
 CREATE TABLE user_credentials (
     id          UUID PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type        VARCHAR(32) NOT NULL,       -- PASSWORD | SMART_ID
-    identifier  VARCHAR(255) NOT NULL,      -- username | PNOEE-xxxxxxxxxxx
-    secret_hash VARCHAR(255),               -- BCrypt for PASSWORD; NULL for SMART_ID
+    type        VARCHAR(32) NOT NULL,       -- PASSWORD today; the discriminator for future issued methods
+    identifier  VARCHAR(255) NOT NULL,      -- the login name, for PASSWORD
+    secret_hash VARCHAR(255),               -- BCrypt; nullable, but see the CHECK below
     enabled     BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (type, identifier)
+    UNIQUE (type, identifier),
+    -- Keeps `secret_hash` honest while leaving it nullable for a future issued
+    -- method that stores something other than a comparable secret.
+    CONSTRAINT password_requires_secret
+        CHECK (type <> 'PASSWORD' OR secret_hash IS NOT NULL)
 );
 ```
 
@@ -231,8 +254,8 @@ Notes:
   moves to `user_credentials.identifier` on the `PASSWORD` row. This finally makes the existing
   `UserData` javadoc true.
 - **`email` is deliberately not unique and never a join key.** See §6.
-- **`nationality` is not decoration.** It carries the country half of the ETSI semantics identifier
-  Phase 2's Smart-ID lookup needs, and it is what makes the uniqueness constraint *correct*: national
+- **`nationality` is not decoration.** With `national_id` it forms the entire Smart-ID binding, and it
+  is what makes the uniqueness constraint *correct*: national
   ID numbers are unique **within a country**, not globally. SK's own demo set proves it —
   `PNOEE-40404040009` and `PNOLT-40404040009` are different people sharing a number. A bare
   `UNIQUE (national_id)` would have collided the first time anyone seeded a non-Estonian test
@@ -244,13 +267,24 @@ Notes:
 - **`email_verified` is a column, not a constant.** §6 explains why at length. It lands in the first
   migration because retrofitting it after Phase 2 starts collecting unverified addresses is precisely
   the ordering mistake this document exists to prevent.
-- `UNIQUE (type, identifier)` is what makes credential lookup a single indexed read for both methods.
+- `UNIQUE (type, identifier)` makes credential lookup a single indexed read for every *issued* method.
+  Note that with only `PASSWORD` in play the identifier is always a login name, so this constraint now
+  overlaps `users.username UNIQUE`. The justification is the one in the `username` note above — display
+  handle vs. login key, free to diverge — and it is now the only thing holding the two apart. Worth
+  re-affirming consciously rather than inheriting.
+- **`secret_hash` stays nullable, with a `CHECK` to keep it honest.** Nullable so a future issued
+  method with something other than a comparable secret has somewhere to go; constrained so today's
+  only type cannot be half-populated. In the database rather than in application code, because a
+  constraint holds for every writer — including the psql session someone opens at 2am.
 
 ### Seeding
 
 Seed users move from `UserSeedRunner` in idp-server to the master. Keep the same approach — seed in
 application code rather than SQL, so the BCrypt hash is computed by the current encoder rather than
 frozen at a cost factor in a migration. Seed both a `users` row and its `PASSWORD` credential row.
+
+Note the asymmetry: that is two rows because password is an *issued* method. Smart-ID needs no third
+row — the `national_id` + `nationality` below are its whole binding.
 
 Give the seeded users a `national_id` + `nationality` now, using SK's published demo identity codes,
 so Phase 2A's happy path works with no data change:
@@ -547,7 +581,8 @@ country code silently stops matching the one you searched for.
 | 1 | Module location — repo root, or a new `internal-services/` directory? | **`internal-services/user-data-master-app/`.** Root folders name architectural tiers, not deployables; the master gets its own tier rather than being wedged into one it does not belong to. §1.1. |
 | 2 | Does resource-backend get its services-realm client registered now or in Phase 2? | **Now.** Free, and keeps realm-JSON edits in one place. It goes unused until Phase 2. |
 | 3 | One combined lookup, or credential + user fetched separately? | **One** — but not for the stated reason, which turns out not to hold. §1.4. |
-| 5 | Keep `username` on `users`? | **Keep.** A Smart-ID-only user still wants a display handle, and its login-identifier role has moved to `user_credentials.identifier` regardless. Comment the apparent duplication. |
+| 5 | Keep `username` on `users`? | **Keep.** A Smart-ID-only user has no credential rows at all and still wants a display handle, and its login-identifier role has moved to `user_credentials.identifier` regardless. Comment the apparent duplication. |
+| 11 | Does Smart-ID get a `user_credentials` row? | **No.** It is an *inherent* method — the state issued the identity, SK holds the key, and `users.national_id` + `users.nationality` are the whole binding. A row would duplicate a derivable identifier and imply an enrolment step that does not exist. `user_credentials` holds *issued* credentials only. See §2. |
 | 6 | `acr` / `amr` value space | **`weak` / `strong`**, **`pwd` / `smartid`**. Phase 1 emits `weak` + `["pwd"]` only. §1.6. |
 | 7 | `national_id` format | **Bare code**, with `nationality` (ISO 3166-1 alpha-2) alongside. The ETSI identifier is derived from the pair. §4. |
 | 8 | Containerize the master? | **No.** `bootRun` like idp-server; only its Postgres goes into compose. §1.1. |
