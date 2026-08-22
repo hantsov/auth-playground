@@ -80,6 +80,12 @@ Phase 2 §4 carries the full protocol reference — environments, RP credentials
 the session endpoint, trusted CAs, and the demo test accounts. Only the device-link-specific parts are
 repeated here.
 
+**Phase 2 §4 was verified against SK's published RP API v3 documentation and the
+[`SK-EID/smart-id-java-client`](https://github.com/SK-EID/smart-id-java-client) reference
+implementation on 2026-08-22, and corrected in four places.** Those corrections apply here too —
+notably the per-environment `schemeName` and the RP-chosen `signatureAlgorithm` / `hashAlgorithm`.
+Read that section before this one; the same pass rewrote the two bullets below.
+
 ### Endpoint
 
 ```
@@ -95,18 +101,26 @@ an anonymous scan by an unknown person is exactly the registration trigger.
 
 ### The `ACSP_V2` slot that changes
 
-The payload is identical to Phase 2's, with one difference that will cost hours if missed:
+The payload is identical to Phase 2's, and **exactly one slot differs** — which is less than an
+earlier draft of this document claimed:
 
 ```
-smart-id|ACSP_V2|serverRandom|rpChallenge|userChallenge|BASE64(relyingPartyName)|BASE64(brokeredRpName)|BASE64(SHA-256(interactions))|interactionTypeUsed|initialCallbackUrl|flowType
+{schemeName}|ACSP_V2|serverRandom|rpChallenge|userChallenge|BASE64(relyingPartyName)|BASE64(brokeredRpName)|BASE64(SHA-256(interactions))|interactionTypeUsed||{flowType}
 ```
 
+- **`flowType` is `QR`** — the description string, capitalised as shown. That is the only slot whose
+  value differs from Phase 2's, which sends `Notification`. The four values are `QR`, `Web2App`,
+  `App2App`, `Notification`, and they name **how the user engaged**, not which endpoint the RP
+  called: a device link opened same-device signs `Web2App` or `App2App` off the same session-create
+  call. If this phase ever grows a same-device variant, this slot and the next bullet both change.
 - `initialCallbackUrl` is **empty in this flow** — and the empty field **still occupies its slot**.
-  Phase 2 populates it; dropping the field rather than emptying it produces a signature that will not
-  verify, with no useful error.
+  **Phase 2 sends it empty too**, contrary to what this document previously said. The split is
+  cross-device versus same-device, not QR versus notification: only `Web2App` and `App2App` populate
+  it, because only they have a browser on the same handset to return the user to. Dropping the field
+  rather than emptying it produces a signature that will not verify, with no useful error.
+- `schemeName` is `smart-id-demo` on DEMO, not the literal `smart-id` — per-environment, and Phase 2
+  §4 has the reasoning.
 - `brokeredRpName` remains empty for us, as in Phase 2, and likewise keeps its slot.
-- `flowType` differs between the two flows. Confirm the exact value against the OpenAPI spec rather
-  than inferring it from the notification flow's.
 
 ### No verification code
 
@@ -122,6 +136,26 @@ phase is more work to exercise than Phase 2.
 
 A real demo handset is also available (Android testing track / iOS TestFlight, register at
 `sid.demo.sk.ee/portal`) and is worth having for a QR demo that convinces anyone.
+
+### Official API docs
+
+[Phase 2 §4](refactor-phase-2_smart-id-notification-authn.md) carries the full index — environments,
+signature protocols, response verification, test accounts, and the reference client. These are the
+pages **this** phase needs on top of it. Checked 2026-08-22 against RP API documentation **v3.2.3**;
+the site is versioned, so check its banner before trusting a fact against a newer release.
+
+| Page | What it settles |
+|---|---|
+| [Device link flows](https://sk-eid.github.io/smart-id-documentation/rp-api/device_link_flows.html) | The core page for this phase: device-link URI construction, `authCode` (HMAC-SHA256 keyed by `sessionSecret`), `elapsedSeconds`, and the same-device vs. cross-device parameter split. Also QR rendering guidance — error correction **LOW** or **MEDIUM**, 6–10px blocks for desktop. |
+| [Device link test endpoint](https://sk-eid.github.io/smart-id-documentation/rp-api/device_link_test_endpoint.html) | The endpoint "Testing without a phone" above describes POSTing session values to. |
+| [Mock Service](https://sk-eid.github.io/smart-id-documentation/rp-api/mock_service.html) | Simulating the handset generally. |
+| [Callback URLs](https://sk-eid.github.io/smart-id-documentation/rp-api/callback_urls.html) | Which flows populate `initialCallbackUrl`; settles the slot-10 rule above. |
+| [OpenAPI specification](https://sk-eid.github.io/smart-id-documentation/rp-api/api_specification.html) | The three device-link session-create endpoints listed in §4. |
+
+From the reference client
+([`SK-EID/smart-id-java-client`](https://github.com/SK-EID/smart-id-java-client), read as reference
+and not depended on): `DeviceLinkAuthenticationResponseValidator` settled the slot-10 rule, and
+`FlowType` settled `QR`.
 
 ---
 
@@ -147,7 +181,6 @@ A real demo handset is also available (Android testing track / iOS TestFlight, r
 
 | # | Question | Needed by |
 |---|---|---|
-| 1 | What is `flowType` for device-link, exactly? Inferring it from the notification flow is the kind of guess that fails as an unverifiable signature. Settle against the OpenAPI spec. | 2 |
 | 2 | Does the anonymous device-link variant return enough to identify the person without a prior national ID, in the shape Phase 2's validation layer expects? | 2 |
 
 ### Design
@@ -160,6 +193,11 @@ A real demo handset is also available (Android testing track / iOS TestFlight, r
 
 ### Resolved
 
+- ✅ **`flowType` for this flow is `QR`** — settled against the `SK-EID/smart-id-java-client`
+  reference implementation (2026-08-22), not inferred from the notification flow. §4 has the full
+  set and the rule behind it.
+- ✅ **`initialCallbackUrl` is empty here *and* in Phase 2.** This document previously said Phase 2
+  populated it; it does not. Only the same-device flows do. §4.
 - ✅ Notification flow first, QR deferred — see §1. The reason was failure-case coverage, not
   difficulty.
 - ✅ ZXing is acceptable for QR encoding; the handwritten-client rule covers protocol, not image

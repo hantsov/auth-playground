@@ -11,8 +11,11 @@
 > and [Phase 4 — device-link / QR](refactor-phase-4_smart-id-device-link-qr.md). Phase 3 needs this
 > one's authentication path; Phase 4 needs its validation layer. They are independent of each other.
 >
-> **Self-contained.** Every Smart-ID protocol fact this plan relies on is reproduced in §4. Earlier
-> analysis drafts in `docs/` are legacy and superseded; do not read them as current design.
+> **Self-contained.** Every Smart-ID protocol fact this plan relies on is reproduced in §4, and §4 has
+> since been **verified against SK's published RP API v3 documentation and the
+> [`SK-EID/smart-id-java-client`](https://github.com/SK-EID/smart-id-java-client) reference
+> implementation** (2026-08-22). That pass corrected four things — see §4 and §6. Earlier analysis
+> drafts in `docs/` are legacy and superseded; do not read them as current design.
 >
 > **Scope:** authenticating people who already exist, by Smart-ID notification flow. Authentication
 > only — digital signing is out of scope. SK's DEMO environment only. The HTTP client is handwritten;
@@ -30,6 +33,11 @@ published demo identity codes precisely so this works with **no data change and 
 |---|---|---|
 | `conan` | `PNOEE-40404040009` | `conan123` |
 | `matrix` | `PNOEE-50001029996` | `matrix123` |
+
+⚠️ **Only `conan` is on SK's published demo account list.** `PNOEE-50001029996` is not, and an earlier
+draft of §4 asserted it was — see §4 and §6. If DEMO does not know that code, `conan` is this phase's
+only happy path. Nothing structural changes; it changes which user the §5 checks run against, and it
+is worth establishing with one session-create call before 2.4 rather than discovering at the end.
 
 ### The boundary, stated hard
 
@@ -76,8 +84,13 @@ phase just needs both methods to reach the same `sub` at different `acr`.
 Package `ee.authplayground.idpserver.features.smartid`, sub-packaged by concept per AGENTS.md
 (`client`, `session`, `validation`, `service`, `controller`; `devicelink` arrives in Phase 4).
 
-`@ConfigurationProperties("playground.idp.smart-id")`: base URL, RP UUID, RP name, certificate level
-(`QUALIFIED`), poll timeouts, truststore location, revocation-check toggle.
+`@ConfigurationProperties("playground.idp.smart-id")`: base URL, RP UUID, RP name, **scheme name**
+(`smart-id-demo` — §4), certificate level (`QUALIFIED`), **signature and hash algorithm**, poll
+timeouts, truststore location, revocation-check toggle.
+
+**Base URL, scheme name and truststore are one environment-scoped set and must move together.** A
+demo truststore with a production scheme name is a configuration that fails at signature
+verification, which is a long way from where the mistake was made.
 
 Spring Boot 4 → `RestClient`, ideally behind a declarative `@HttpExchange` interface so the endpoint
 list reads like the documentation. Record DTOs.
@@ -102,7 +115,8 @@ Compute and display the 4-digit verification code. Poll **our own** backend endp
 Then the part worth writing verbosely, because it is the entire trust model:
 
 - Reconstruct the `ACSP_V2` payload byte-exactly (§4).
-- Verify the RSASSA-PSS signature with the certificate's public key.
+- Verify the RSASSA-PSS signature with the certificate's public key, **using the same hash algorithm
+  we asked for in the request** — it is a request field, not just a response field (§4).
 - Check `rpChallenge` matches what we generated.
 - Validate the chain against the **explicitly configured demo CA truststore**, not the JVM default.
 - Check validity dates and `certificateLevel >= QUALIFIED`.
@@ -176,8 +190,10 @@ cost nothing now.
 
 ## 4. Protocol reference
 
-Everything below came from SK's own documentation during analysis. **⚠️ marks facts that were never
-confirmed and must be checked against the OpenAPI spec before they are written into code.**
+Everything below is confirmed against SK's published RP API v3 documentation and the
+`SK-EID/smart-id-java-client` reference implementation unless marked otherwise. **⚠️ marks what is
+still an inference.** Where SK's prose and SK's own client disagree, the client wins — that happened
+once below (the verification code), and the client was right.
 
 ### Environments and credentials
 
@@ -188,6 +204,7 @@ confirmed and must be checked against the OpenAPI spec before they are written i
 | Demo cert upload (OCSP) | `https://demo.sk.ee/upload_cert/` |
 | Demo RP UUID | `00000000-0000-4000-8000-000000000000` |
 | Demo RP name | `DEMO` |
+| Demo **scheme name** | `smart-id-demo` (production: `smart-id`) |
 
 ### Endpoints
 
@@ -199,50 +216,98 @@ GET   {BASE}/v3/session/{sessionID}                                       ← sh
 
 Semantics identifier: `PNO` + ISO country + `-` + national ID, e.g. `PNOEE-30303039914`.
 
+### Request body
+
+`signatureProtocol` is **`ACSP_V2`** — confirmed. The split is by *operation*, not by flow: `ACSP_V2`
+for every authentication request, `RAW_DIGEST_SIGNATURE` for signing. The original inference was
+right.
+
+```json
+{
+  "relyingPartyUUID": "00000000-0000-4000-8000-000000000000",
+  "relyingPartyName": "DEMO",
+  "certificateLevel": "QUALIFIED",
+  "signatureProtocol": "ACSP_V2",
+  "signatureProtocolParameters": {
+    "rpChallenge": "<Base64, 44–88 chars>",
+    "signatureAlgorithm": "RSASSA_PSS",
+    "hashAlgorithm": "SHA3_512"
+  },
+  "interactions": "<Base64 of the interactions JSON>",
+  "verificationCodeType": "NUMERIC4"
+}
+```
+
+`capabilities` and `requestProperties` are optional; we send neither. **There is no
+`initialCallbackUrl` in this request** — see the payload note below.
+
+**The RP chooses the algorithms.** `signatureAlgorithm` and `hashAlgorithm` are *request* fields, not
+merely response fields to read back, and whatever is sent here is what the returned signature must be
+verified with. Sending one and verifying with another fails silently and totally.
+
 ### ACSP_V2 payload
 
-Pipe-separated, UTF-8, verified with the algorithm in `signature.signatureAlgorithm` (RSASSA-PSS):
+Pipe-separated, UTF-8. Two separate response fields govern verification and both are needed:
+`signature.signatureAlgorithm` (the scheme — RSASSA-PSS) and
+`signature.signatureAlgorithmParameters.hashAlgorithm` (the digest — SHA-512 by default). The second
+is easy to miss.
 
 ```
-smart-id|ACSP_V2|serverRandom|rpChallenge|userChallenge|BASE64(relyingPartyName)|BASE64(brokeredRpName)|BASE64(SHA-256(interactions))|interactionTypeUsed|initialCallbackUrl|flowType
+{schemeName}|ACSP_V2|serverRandom|rpChallenge|userChallenge|BASE64(relyingPartyName)|BASE64(brokeredRpName)|BASE64(SHA-256(interactions))|interactionTypeUsed||{flowType}
 ```
 
-Gotchas that will cost hours:
+Slot 10 is deliberately written empty above. Gotchas, each of which will cost hours:
 
-- `brokeredRpName` is **empty for us** — but the empty field still occupies its slot.
-- `initialCallbackUrl` is **empty in the QR flow**, likewise still occupying its slot. It is populated
-  in this phase's flow; the empty-slot rule is what Phase 4 inherits.
-- Retain the **exact bytes** of the `interactions` JSON sent; re-serialising produces a different hash.
-
-⚠️ **`signatureProtocol` for the notification flow was never confirmed.** `ACSP_V2` is documented for
-device-link authentication; the notification page states only that auth and signature use separate
-protocols — a split by operation, not by flow. Reasonable inference, still an inference. Settle
-against the OpenAPI spec before writing the request DTO.
+- **`schemeName` is `smart-id-demo` here, not `smart-id`.** It is a per-environment value rather than
+  a constant, and this whole phase runs against DEMO — a hardcoded `smart-id` verifies nothing, ever.
+  Config it alongside the truststore and scope it identically (§2.1).
+- **`initialCallbackUrl` (slot 10) is empty in this flow — and in the QR flow too.** The split is not
+  notification-versus-device-link, it is **cross-device versus same-device**: only `Web2App` and
+  `App2App` populate it, because only they have a browser on the same handset to hand the user back
+  to. `Notification` and `QR` have nowhere to call back to, so both send an empty slot. The slot is
+  still there in every case; dropping the field rather than emptying it produces a signature that
+  will not verify, with no useful error. An earlier draft of this document had the notification flow
+  populating it, which is exactly the mistake the empty-slot discipline exists to survive.
+- `brokeredRpName` is **empty for us** — likewise an empty field occupying its slot.
+- **`flowType` is the description string, not the enum name:** `Notification`, capitalised. The four
+  values are `QR`, `Web2App`, `App2App`, `Notification`.
+- **Retain the exact `interactions` JSON string you serialised.** The request sends `BASE64(json)`;
+  this slot is `BASE64(SHA-256(json bytes))` — the hash is over the *decoded* form. Hold the string
+  you built and hash that one. Re-serialising from the object produces a different hash.
 
 ### Verification code (notification flow)
 
-SHA-256 the `rpChallenge`, take the **2 rightmost bytes**, big-endian unsigned, last 4 decimal digits.
-Use the **raw bytes**, not their Base64 encoding.
+SHA-256 the `rpChallenge`, take the **2 rightmost bytes**, big-endian unsigned, last 4 decimal digits,
+zero-padded. Use the **raw bytes**, not their Base64 encoding.
 
-⚠️ SK's own pseudocode reads `integer(SHA-256(rpChallenge)[-2:-1]) mod 10000`, which as a Python slice
-is **one** byte, contradicting the prose. Two bytes is almost certainly right — cross-check against
-the Java client before implementing.
+✅ **Two bytes, confirmed.** SK's own pseudocode reads
+`integer(SHA-256(rpChallenge)[-2:-1]) mod 10000`, which as a Python slice is **one** byte and
+contradicts their prose. The prose is right: `VerificationCodeCalculator` reads a big-endian
+`short` at `length - 2`, masks it with `0xffff`, and zero-pads to four digits.
 
 ### Test accounts (demo)
 
-| Purpose | Identifier |
-|---|---|
-| Success, adult, EE | `PNOEE-40404040009-MOCK-Q` |
-| Notification success (EE) | `PNOEE-50001029996-DEMO-Q` |
-| Underage (born 2011-01-01) | `PNOEE-61101012257-DEMO-Q` |
-| `USER_REFUSED` | `PNOEE-30403039917-MOCK-Q` |
-| `WRONG_VC` | `PNOEE-30403039972-MOCK-Q` |
-| `TIMEOUT` | `PNOEE-30403039983-MOCK-Q` |
+SK publishes these as **document numbers** — the `-MOCK-Q` / `-DEMO-Q` suffix belongs to the document
+number, not to the identity. This phase's endpoint takes an **ETSI semantics identifier**, so the
+suffix comes off; Phase 4's device-link endpoints take the document number as published.
+
+| Purpose | Semantics identifier (this phase) | Document number (Phase 4) |
+|---|---|---|
+| Success, adult, EE | `PNOEE-40404040009` | `PNOEE-40404040009-MOCK-Q` |
+| Underage, EE | `PNOEE-61101019999` | `PNOEE-61101019999-MOCK-Q` |
+| `USER_REFUSED` | `PNOEE-30403039917` | `PNOEE-30403039917-MOCK-Q` |
+| `WRONG_VC` | `PNOEE-30403039972` | `PNOEE-30403039972-MOCK-Q` |
+| `TIMEOUT` | `PNOEE-30403039983` | `PNOEE-30403039983-MOCK-Q` |
 
 LT / LV / BE equivalents exist. The failure accounts are why the notification flow goes first.
 
-Note the first two match the seeded users' national IDs — that is deliberate, and it is what makes
-this phase's happy path work with no data change.
+⚠️ The suffix-stripping rule is an inference from the endpoint's path parameter being
+`{id-etsi-qcs-SemanticsId-Natural}`. It is strongly indicated and cheap to settle — one session-create
+call answers it — so settle it there rather than by more reading.
+
+Two corrections against the earlier draft of this table: the underage account is `61101019999`, not
+`61101012257`; and **`PNOEE-50001029996` — `matrix`'s seeded code — is not on SK's published list at
+all.** See §1.
 
 ### Trusted CAs
 
@@ -255,6 +320,50 @@ rejects every production certificate and vice versa. Scope by environment from d
 
 Demo certificates are **not automatically in OCSP** — they must be uploaded manually. Make revocation
 checking configurable and **off by default**, with a prominent comment that production must do it.
+
+### Official API docs
+
+Every fact in §4 traces to one of these. Checked 2026-08-22 against RP API documentation **v3.2.3** —
+the site is versioned and carries the version in its banner, so check it before trusting anything here
+against a newer release.
+
+| Page | What it settles |
+|---|---|
+| [OpenAPI specification](https://sk-eid.github.io/smart-id-documentation/rp-api/api_specification.html) · [this phase's endpoint](https://sk-eid.github.io/smart-id-documentation/rp-api/api_specification.html#tag/authentication-session/POST/v3/authentication/notification/etsi/%7Bid-etsi-qcs-SemanticsId-Natural%7D) | Request and response schemas. Redoc-rendered, so it reads poorly as raw HTML — the topic pages below are usually the faster route to the same fact. |
+| [Notification based flows](https://sk-eid.github.io/smart-id-documentation/rp-api/notification_based_flows.html) | This phase's flow end to end, and the verification-code algorithm in prose. |
+| [Signature protocols](https://sk-eid.github.io/smart-id-documentation/rp-api/signature_protocols.html) | `ACSP_V2` vs `RAW_DIGEST_SIGNATURE`, the payload field order, the encoding rules. |
+| [Response verification](https://sk-eid.github.io/smart-id-documentation/rp-api/response_verification.html) | **Read this before writing §2.3.** It is the validation the trust model rests on. |
+| [Interactions](https://sk-eid.github.io/smart-id-documentation/rp-api/interactions.html) | Interaction types and their JSON — the bytes slot 8 hashes. |
+| [Callback URLs](https://sk-eid.github.io/smart-id-documentation/rp-api/callback_urls.html) | Which flows populate `initialCallbackUrl` and which send it empty. |
+| [API technical description](https://sk-eid.github.io/smart-id-documentation/rp-api/api_details.html) | Session polling, `endResult` values, certificate levels. |
+| [Environments](https://sk-eid.github.io/smart-id-documentation/environments.html) | DEMO base URL, RP UUID and name, and **`schemeName`**. |
+| [Test accounts](https://sk-eid.github.io/smart-id-documentation/test_accounts.html) | The demo identities above. |
+| [Mock Service](https://sk-eid.github.io/smart-id-documentation/rp-api/mock_service.html) | Driving `USER_REFUSED` / `WRONG_VC` / `TIMEOUT` without a handset. |
+| [Overview of API endpoints](https://sk-eid.github.io/smart-id-documentation/rp-api/overview_of_api_endpoints.html) | The whole endpoint list on one page. |
+
+Also on the site and not consulted for this phase:
+[Additional security measures](https://sk-eid.github.io/smart-id-documentation/rp-api/additional_security_measures.html),
+[Smart-ID integration](https://sk-eid.github.io/smart-id-documentation/implementation.html), and the
+[device-link pages](https://sk-eid.github.io/smart-id-documentation/rp-api/device_link_flows.html),
+which are [Phase 4](refactor-phase-4_smart-id-device-link-qr.md)'s.
+
+**Reference implementation:**
+[`SK-EID/smart-id-java-client`](https://github.com/SK-EID/smart-id-java-client) — read as reference,
+never taken as a dependency (see the scope note at the top). It is the tie-breaker when SK's own prose
+is ambiguous or self-contradictory, which happened twice. The classes that settled §4:
+
+| Class | Settles |
+|---|---|
+| `VerificationCodeCalculator` | Two bytes: a big-endian `short` at `length - 2`, masked `0xffff`. |
+| `FlowType` | `QR` / `Web2App` / `App2App` / `Notification` — the description strings slot 11 takes. |
+| `NotificationAuthenticationSessionRequestBuilder` | The request body above, including `signatureProtocol: ACSP_V2`. |
+| `NotificationAuthenticationResponseValidator` | Payload reconstruction for this flow; slot 10 empty. |
+| `DeviceLinkAuthenticationResponseValidator` | The cross-device/same-device rule behind slot 10. |
+| `util/InteractionUtil` | Digest over the raw JSON, Base64 only for transport. |
+
+⚠️ The [GitHub wiki](https://github.com/SK-EID/smart-id-documentation/wiki) is **superseded** and its
+pages now partly fail to render, but it still ranks well in search and looks authoritative. Prefer the
+site above; the wiki's own banner says the same.
 
 ---
 
@@ -280,13 +389,34 @@ checking configurable and **off by default**, with a prominent comment that prod
 
 ### Blocking
 
+**None.** Both blockers were settled on 2026-08-22 against SK's published RP API v3 documentation and
+the `SK-EID/smart-id-java-client` reference implementation. §4 now carries the confirmed values.
+
+### To settle on the first live call
+
+Cheaper to answer by creating one session against DEMO than by more reading. Neither blocks starting
+2.1, and both should be answered before 2.4 is wired up.
+
 | # | Question | Needed by |
 |---|---|---|
-| 1 | Is `signatureProtocol` `ACSP_V2` for the notification flow? Confirm against the OpenAPI spec. | 2.1 |
-| 2 | Verification code: 2 bytes or 1? Cross-check SK's prose against the Java client. | 2.2 |
+| 1 | Does the ETSI endpoint take the bare semantics identifier, `-MOCK-Q` stripped, as §4 assumes? | 2.1 |
+| 2 | Does `PNOEE-50001029996` (`matrix`) exist in DEMO at all? If not, `conan` is the only happy path and the §5 "same `sub`" check runs against him. | 2.4 |
+
+Also unresolved and not answerable from the API docs: **where SK's demo CA certificates are
+published.** The environments page names the demo chain but does not link the certificates. Needed
+before 2.3 can validate anything.
 
 ### Resolved
 
+- ✅ **`signatureProtocol` is `ACSP_V2`** for notification authentication. The split is by operation,
+  not by flow — `ACSP_V2` for authentication, `RAW_DIGEST_SIGNATURE` for signing. The inference this
+  document made was correct.
+- ✅ **The verification code uses 2 bytes**, not 1. SK's prose beats SK's pseudocode.
+- ✅ Four §4 errors corrected in the same pass, each of which would have failed signature
+  verification with no useful diagnostic: `schemeName` is `smart-id-demo` and per-environment;
+  `initialCallbackUrl` is empty in this flow *and* in QR, populated only by the same-device
+  device-link flows; `flowType` is `Notification`, the description string; and the RP chooses
+  `signatureAlgorithm` + `hashAlgorithm` in the request.
 - ✅ Notification flow first; QR designed-for and deferred to Phase 4.
 - ✅ **Smart-ID has no `user_credentials` row.** It is an *inherent* method: the state issued the
   identity, SK holds the key, and `users.national_id` + `users.nationality` are the whole binding.
