@@ -6,6 +6,11 @@
 > accounts each produce their own message, and an identity SK knows but the master does not is
 > rejected. Every §5 box is ticked against a running system rather than against the code.
 >
+> **One known defect is carried, not fixed:** a security review found that the Smart-ID session is
+> not bound to the browser that started it, which permits login CSRF. It is recorded as
+> [known issue #1](known-issues-to-investigate.md#1-smart-id-login-csrf-the-smart-id-session-is-not-bound-to-the-browser-that-started-it),
+> along with the three code comments that currently claim the opposite.
+>
 > **Depends on:** [Phase 1](refactor-phase-1_user-data-master-and-idp.md) — **done and verified.**
 > The `users` schema with `national_id` + `nationality`, the `playground-services` realm, `sub` being
 > the master's UUID, and the `acr` / `amr` transport through Keycloak are all in place. Seed users
