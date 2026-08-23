@@ -27,7 +27,7 @@
       </label>
       <label class="method-option">
         <input type="radio" name="method" value="smart-id">
-        <span>Smart-ID <em class="badge">Coming soon</em></span>
+        <span>Smart-ID</span>
       </label>
     </fieldset>
 
@@ -46,9 +46,18 @@
       </form>
     </section>
 
-    <!-- Smart-ID form (placeholder). Fields render but submission is disabled. -->
+    <!--
+      Smart-ID panel. Three views, one at a time: the form, the waiting state
+      with the verification code, and a failure message.
+
+      Country and national ID are ADDRESSING information — they decide whose
+      phone rings. They are not identity: what the user is logged in as comes
+      from the certificate in the signed response, server-side. Someone may type
+      any national ID they like; what they cannot do is produce a signature from
+      the private key on that person's phone.
+    -->
     <section class="form-panel form-panel-smart-id">
-      <form onsubmit="return false" aria-describedby="smart-id-note">
+      <form id="smart-id-form" autocomplete="off">
         <div class="field">
           <label for="smart-id-country">Country</label>
           <select id="smart-id-country" name="country">
@@ -59,12 +68,43 @@
         </div>
         <div class="field">
           <label for="smart-id-national">National identification number</label>
-          <input id="smart-id-national" name="nationalId" type="text" inputmode="numeric" pattern="[0-9]+" placeholder="e.g. 30303039914">
+          <input id="smart-id-national" name="nationalId" type="text" inputmode="numeric"
+                 pattern="[0-9]+" required placeholder="e.g. 40404040009">
         </div>
-        <button type="submit" class="primary" disabled>Coming soon</button>
-        <p id="smart-id-note" class="form-note">Smart-ID authentication will be enabled in a future iteration.</p>
+        <button type="submit" class="primary" id="smart-id-submit">Sign in with Smart-ID</button>
+        <p class="form-note">A confirmation request will be sent to your Smart-ID app.</p>
       </form>
+
+      <!--
+        The verification code is a security control, not a progress indicator,
+        so it is the largest thing on the page and the instruction to compare it
+        is explicit. An attacker who tricks someone into starting a login
+        triggers a real push to that person's phone — what they cannot do is
+        make the victim's phone show the attacker's number. A user who compares
+        the two sees the mismatch; a user who was never told to compare does not.
+      -->
+      <div id="smart-id-waiting" class="smart-id-waiting" hidden>
+        <p class="smart-id-waiting-label">Verification code</p>
+        <p class="smart-id-code" id="smart-id-code" aria-live="polite">----</p>
+        <p class="form-note">
+          Check that your Smart-ID app shows this same number, then enter your PIN.
+          <strong>If the numbers differ, cancel in the app.</strong>
+        </p>
+        <p class="form-note" id="smart-id-waiting-status" role="status">Waiting for confirmation…</p>
+        <button type="button" class="secondary" id="smart-id-cancel">Cancel</button>
+      </div>
+
+      <div id="smart-id-error" class="banner banner-error" role="alert" hidden></div>
     </section>
   </main>
+
+  <!--
+    The only JavaScript on this page, and it is confined to the Smart-ID panel.
+    The method picker above stays CSS-only (:checked + sibling selectors) and the
+    password form still works with scripting disabled — Smart-ID cannot, because
+    the flow is inherently asynchronous: we have to wait for a person to pick up
+    their phone.
+  -->
+  <script th:src="@{/js/smart-id.js}" defer></script>
 </body>
 </html>

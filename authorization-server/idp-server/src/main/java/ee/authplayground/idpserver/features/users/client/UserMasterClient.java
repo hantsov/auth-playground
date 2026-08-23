@@ -56,6 +56,61 @@ public class UserMasterClient {
      * @return empty when no such credential exists — which the caller must treat
      *         exactly like a bad password, never like a distinguishable error
      */
+    /**
+     * The <b>Smart-ID</b> login-path lookup: which person is this national ID,
+     * and do we know them?
+     *
+     * <h2>Why this is not a credential lookup</h2>
+     * There is no {@code SMART_ID} row to fetch, and adding one would be a
+     * mistake rather than a convenience. Smart-ID is an <i>inherent</i> method:
+     * the state issued the identity, SK holds the private key, and
+     * {@code users.national_id} + {@code users.nationality} are the entire
+     * binding. {@code user_credentials} holds <i>issued</i> credentials only —
+     * things we handed out and hold a secret for. A credential row here would
+     * duplicate a derivable identifier and imply an enrolment step that does not
+     * exist.
+     * <p>
+     * So the two login paths differ in their lookup and converge afterwards:
+     * identifier &rarr; {@code users.id} &rarr; principal &rarr; the same
+     * {@code sub}. That convergence is the point — one person, two methods, one
+     * subject, at different assurance levels.
+     *
+     * <h2>Both halves, and why the second is not politeness</h2>
+     * National ID numbers are unique within a country, not globally. Smart-ID's
+     * own demo set has {@code PNOEE-40404040009} and {@code PNOLT-40404040009}
+     * as different people sharing a number, so a lookup on the bare code would
+     * cheerfully return the wrong human.
+     *
+     * @param nationalId  the code, without the country prefix
+     * @param nationality ISO 3166-1 alpha-2, as stored on the person record
+     * @return empty when nobody holds that national ID. <b>In this phase that is
+     *         a rejection</b>, not a registration — Phase 3 replaces it with a
+     *         required action. Note it is emphatically not "authentication
+     *         failed": Smart-ID already proved who they are, we simply have no
+     *         record of them.
+     */
+    public Optional<UserDataResponse> findByNationalId(String nationalId, String nationality) {
+        return restClient.get()
+                .uri(uri -> uri.path("/internal/users/by-national-id/{nationalId}")
+                        .queryParam("nationality", nationality)
+                        .build(nationalId))
+                .exchange((request, response) -> {
+                    HttpStatusCode status = response.getStatusCode();
+                    if (status.value() == 404) {
+                        log.debug("No user at the master with national id {}-{}", nationality, nationalId);
+                        return Optional.<UserDataResponse>empty();
+                    }
+                    if (!status.is2xxSuccessful()) {
+                        // Same reasoning as the credential lookup: a 401/403 here is
+                        // a service-token or scope problem, and it must not be
+                        // mistaken for "we don't know this person".
+                        throw new UserMasterUnavailableException(
+                                "User data master returned " + status + " for a national-id lookup");
+                    }
+                    return Optional.ofNullable(response.bodyTo(UserDataResponse.class));
+                });
+    }
+
     public Optional<UserCredentialResponse> findPasswordCredential(String loginName) {
         return restClient.get()
                 .uri(uri -> uri.path("/internal/credentials")

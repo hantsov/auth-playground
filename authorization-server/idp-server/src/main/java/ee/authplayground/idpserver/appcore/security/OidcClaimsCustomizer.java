@@ -1,5 +1,6 @@
 package ee.authplayground.idpserver.appcore.security;
 
+import ee.authplayground.idpserver.features.smartid.service.SmartIdAuthenticationToken;
 import ee.authplayground.idpserver.features.users.service.UserDataDetails;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
@@ -54,13 +55,39 @@ public class OidcClaimsCustomizer {
     private static final String ACR_WEAK = "weak";
 
     /**
+     * What a Smart-ID authentication is worth.
+     *
+     * <h2>Why these two are not the same</h2>
+     * A password proves someone knows a secret. A Smart-ID authentication
+     * produces a signature from a private key held on a specific phone, over a
+     * challenge we generated seconds earlier, with a qualified certificate the
+     * state stands behind. Those are different claims about the world, and a
+     * relying party that cannot tell them apart cannot make a decision that
+     * depends on the difference — which is the entire reason for emitting
+     * {@code acr} at all.
+     * <p>
+     * <b>The same person reaches both levels at the same {@code sub}.</b> That
+     * is the payoff of keeping identity on the person record and out of the
+     * credential: {@code acr} describes this login, not this human.
+     */
+    private static final String ACR_STRONG = "strong";
+
+    /**
      * Authentication Methods References — <i>how</i> they authenticated, as
-     * opposed to how much it counts for. Phase 2 adds {@code smartid}.
+     * opposed to how much it counts for.
      * <p>
      * An array because OIDC Core defines it as one: a single authentication can
      * legitimately involve several methods.
      */
     private static final List<String> AMR_PASSWORD = List.of("pwd");
+
+    /**
+     * Not an RFC 8176 registered value — that document has no Smart-ID entry.
+     * Chosen for legibility over a strained fit with something registered:
+     * {@code sc} (smart card) and {@code swk} (software key) each describe part
+     * of what Smart-ID is and would mislead about the rest.
+     */
+    private static final List<String> AMR_SMART_ID = List.of("smartid");
 
     @Bean
     public OAuth2TokenCustomizer<JwtEncodingContext> idTokenCustomizer() {
@@ -87,11 +114,16 @@ public class OidcClaimsCustomizer {
             // on a scope — they are facts about the token itself rather than
             // profile data the relying party asked for.
             //
-            // Emitted now, while there is one possible combination and it cannot
-            // be got wrong. Adding them in Phase 2 would mean changing a token
-            // contract that Keycloak and resource-backend already consume.
-            claims.claim("acr", ACR_WEAK);
-            claims.claim("amr", AMR_PASSWORD);
+            // Derived from how the user actually authenticated, not hardcoded.
+            // Note there is exactly ONE writer of `acr` in the whole chain: this
+            // line. Keycloak imports the value with syncMode FORCE and re-emits
+            // it, and the `acr` client scope was deliberately removed from
+            // react-client so Keycloak's built-in oidc-acr-mapper does not also
+            // write the claim. Two mappers writing one claim is not something to
+            // leave to chance.
+            boolean smartId = principal instanceof SmartIdAuthenticationToken;
+            claims.claim("acr", smartId ? ACR_STRONG : ACR_WEAK);
+            claims.claim("amr", smartId ? AMR_SMART_ID : AMR_PASSWORD);
 
             if (scopes.contains("profile")) {
                 claims.claim("preferred_username", user.getPreferredUsername());
