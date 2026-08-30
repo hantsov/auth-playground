@@ -48,10 +48,7 @@ flowchart TD
     linkStyle 5,6 stroke:#999,stroke-width:1px
 ```
 
-**[docs/tech-overview.md](docs/tech-overview.md) owns this diagram** and is where it gets explained:
-how to read the edge styles, why Keycloak sits in the middle, which edge is not built yet, the
-step-by-step request/token flow, and the full tech stack. The copy above is for orientation — change
-the one in `tech-overview.md` first.
+**[docs/tech-overview.md](docs/tech-overview.md) owns this diagram** and is where it gets explained in more detail.
 
 ## Folder structure
 
