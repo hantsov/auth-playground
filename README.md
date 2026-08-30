@@ -9,46 +9,49 @@ This setup leverages the **identity brokering** pattern. New authentication meth
 - **Keycloak** as the realm-level authorization server. Two realms: `playground` for customers (one public client `react-client`, one upstream identity-provider entry `playground-idp`, a `USER` realm role, brokered-only — Keycloak's own username/password login is disabled and the browser auto-redirects to the upstream IdP), and `playground-services` for machine-to-machine `client_credentials` traffic.
 - **idp-server** — custom upstream identity provider built on Spring Authorization Server 7 (Java 25, Spring Boot 4). Owns the actual user authentication: username/password is live, Smart-ID is stubbed with placeholder fields. Federated to Keycloak as an OIDC provider. **Has no database** — it reads credentials from user-data-master on the fly, which is the classic user-federation pattern.
 - **user-data-master** — Spring Boot 4 / Java 25 OAuth2 resource server holding the golden record: `users` (identity + person attributes) and `user_credentials` (password hashes, later Smart-ID bindings). Its `users.id` is the `sub` claim everything downstream keys on. Reachable only with a service token, and `credentials:read` is granted to exactly one client.
-- **resource-backend** — Spring Boot 4 / Java 25 OAuth2 resource server. Validates JWTs against Keycloak's JWKS, exposes a small REST API, persists data via Flyway-managed PostgreSQL.
+- **resource-backend** — Spring Boot 4 / Java 25 OAuth2 resource server. Validates JWTs against Keycloak's JWKS, exposes a small REST API, persists data via Flyway-managed PostgreSQL. It owns `custom_data` and app feature data only; person attributes belong to user-data-master, which it will read over HTTP once the *Inspect User Data* feature lands — making it an OAuth2 *client* as well as a resource server, the same dual role idp-server already has.
 - **client-frontend** — React 19 / Vite 7 SPA acting as an OAuth2 public client. Uses Authorization Code + PKCE against Keycloak; talks to `keycloak-js` directly through a custom `AuthProvider` context.
 - Three PostgreSQL instances — one each for Keycloak's own state, the user data master, and the resource-backend's app data.
 
 ## Architecture
 
-```
-   ┌──────────────────────┐
-   │ user-master-postgres │
-   │ (identity + creds)   │
-   └──────────▲───────────┘
-              │ JDBC
-   ┌──────────┴───────────┐
-   │  user-data-master    │  golden record — the only store of users and
-   │  (resource server)   │  credentials anywhere in the system
-   └──────────▲───────────┘
-              │ client_credentials token from realm `playground-services`
-              │ scopes: credentials:read, customer:read
-              │
-   ┌──────────┴───────────┐   Auth Code      ┌──────────────────────┐                  ┌──────────────────────┐
-   │    idp-server        │   (broker)       │  keycloak-postgres   │                  │   backend-postgres   │
-   │ (Spring Auth Server, │◄───────────────┐ │  (Keycloak state)    │                  │  (app data, Flyway)  │
-   │  custom OIDC OP —    │                │ └──────────▲───────────┘                  └──────────▲───────────┘
-   │  no database)        │                │            │ JDBC                                    │ JDBC
-   └──────────────────────┘                │ ┌──────────┴───────────┐                  ┌──────────┴───────────┐
-                                           └─│    Keycloak 26       │                  │  resource-backend    │
-                                             │ realm: playground    │                  │ (Spring Boot OAuth2  │
-                                             │   — brokered-only    │                  │  resource server)    │
-                                             │ realm: playground-   │                  └──────────▲───────────┘
-                                             │   services — M2M     │                             │
-                                             └──────────▲───────────┘                             │
-                                                        │ OIDC + PKCE                             │ Bearer JWT
-                                                        │ (browser)                               │ REST /api/*
-                                                        │                                         │
-                                             ┌──────────┴─────────────────────────────────────────┴──────────┐
-                                             │           client-frontend (React SPA, public client)          │
-                                             └───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph webapp["web-app/"]
+        direction LR
+        frontend["client-frontend<br/>React 19 SPA — OAuth2 public client"]
+        backend["resource-backend<br/>OAuth2 resource server<br/>has db: backend-postgres"]
+    end
+
+    subgraph authserver["authorization-server/"]
+        direction LR
+        idp["idp-server<br/>Spring Authorization Server, custom OIDC OP<br/>deliberately has no database"]
+        keycloak["Keycloak 26 — authorization server<br/>realm: playground — brokered-only<br/>realm: playground-services — M2M<br/>has db: keycloak-postgres"]
+    end
+
+    subgraph internal["internal-services/"]
+        master["user-data-master<br/>OAuth2 resource server — golden record<br/>has db: user-master-postgres"]
+    end
+
+    %% main OIDC / OAuth2 flow — the point of the playground
+    frontend ==>|"OIDC Auth Code + PKCE (browser)"| keycloak
+    keycloak ==>|"Auth Code — brokers the login here"| idp
+    frontend ==>|"Bearer JWT — REST /api/*"| backend
+    idp ==>|"client_credentials<br/>credentials:read + customer:read"| master
+    backend -.->|"client_credentials — customer:read<br/>PLANNED, not built"| master
+
+    %% supporting integrations — real, but not the story
+    keycloak -.->|"JWKS"| backend
+    keycloak -.->|"JWKS — playground-services"| master
+
+    linkStyle 4 stroke-width:3px,stroke-dasharray:6 4
+    linkStyle 5,6 stroke:#999,stroke-width:1px
 ```
 
-See [docs/tech-overview.md](docs/tech-overview.md) for the full request/token flow and tech stack.
+**[docs/tech-overview.md](docs/tech-overview.md) owns this diagram** and is where it gets explained:
+how to read the edge styles, why Keycloak sits in the middle, which edge is not built yet, the
+step-by-step request/token flow, and the full tech stack. The copy above is for orientation — change
+the one in `tech-overview.md` first.
 
 ## Folder structure
 
