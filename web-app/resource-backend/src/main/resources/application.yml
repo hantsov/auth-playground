@@ -43,8 +43,48 @@ management:
     health:
       show-details: when-authorized
 
-logging:
-  level:
-    org.springframework.security: INFO
-    ee.authplayground.resourceserver: DEBUG
-    org.flywaydb: INFO
+# Log levels are NOT here. They live in log4j2-spring.xml, which is the single
+# owner of logging configuration for this app — two sources for one setting is
+# how you lose an hour wondering why a level change did nothing. Overrides are
+# still available without editing the XML: it uses Boot's `spring:` lookup, so
+# `playground.http-logging.level` below feeds the traffic logger's level.
+
+# Custom playground namespace. Keep all our config under one prefix so
+# nothing collides with Spring's own keys.
+playground:
+  http-logging:
+    enabled: true
+    # Read by log4j2-spring.xml via ${spring:playground.http-logging.level}.
+    # OFF ships nothing; DEBUG turns the traffic dump on.
+    level: DEBUG
+    include-headers: true
+    include-bodies: true
+    # Applied to the body AFTER masking. Characters, not bytes — close enough
+    # for a truncation marker, and it keeps multi-byte UTF-8 from being cut
+    # mid-character.
+    max-body-bytes: 8192
+    exclude-paths:
+      - /actuator/**
+    # ---------------------------------------------------------------------
+    # MASKING IS OFF BY DEFAULT. THIS INVERTS NORMAL PRACTICE, ON PURPOSE.
+    #
+    # A production logger masks by default and requires deliberate action to
+    # unmask. This one does the opposite, because the entire premise of this
+    # playground is that you can watch a token travel from idp-server through
+    # Keycloak to the SPA and READ IT at every hop. A logger that redacts the
+    # token defeats the exercise — same trade as the weak-credentials-on-purpose
+    # convention in AGENTS.md.
+    #
+    # The mechanism is fully implemented and switchable, so the shape of a
+    # correct implementation is on record. What must never happen is this
+    # default travelling out of the playground.
+    # ---------------------------------------------------------------------
+    masking:
+      auth-tokens: false
+      cookies: false
+      # Field names masked at any depth. Empty here — resource-backend serves
+      # the user their own record, and nothing in it is a secret they do not
+      # already hold. This is load-bearing in user-data-master-app, whose
+      # /internal/credentials returns a BCrypt secretHash next to a nested
+      # user.nationalId.
+      json-fields: []

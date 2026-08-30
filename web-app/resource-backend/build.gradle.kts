@@ -25,6 +25,19 @@ dependencies {
     implementation(platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES))
     annotationProcessor(platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES))
 
+    // Log4j2 replaces Logback as the SLF4J binding.
+    //
+    // `modules {}` rewrites the dependency graph wherever spring-boot-starter-logging
+    // appears transitively, so it does not have to be excluded from each starter
+    // individually — which is the fragile way to do this, because every new starter
+    // added later would need remembering.
+    modules {
+        module("org.springframework.boot:spring-boot-starter-logging") {
+            replacedBy("org.springframework.boot:spring-boot-starter-log4j2", "Use Log4j2 instead of Logback")
+        }
+    }
+    implementation("org.springframework.boot:spring-boot-starter-log4j2")
+
     // Spring Boot Starters
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-security")

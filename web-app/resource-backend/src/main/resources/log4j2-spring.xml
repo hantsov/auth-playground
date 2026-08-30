@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Log4j2 configuration for resource-backend.
+
+  The filename matters. Boot's documentation is explicit that the standard
+  `log4j2.xml` "is loaded too early" for Boot's own extensions to work — the
+  `spring:` property lookup and the <SpringProfile> tag used below both need the
+  `-spring` variant. Rename this file and both silently stop working.
+
+  This file is the SINGLE owner of log levels for this app. There is deliberately
+  no `logging.level.*` block in application.yml; see the comment there.
+-->
+<Configuration status="WARN">
+
+  <Appenders>
+    <!-- Ordinary application logging. -->
+    <Console name="Console" target="SYSTEM_OUT">
+      <!--
+        %X{correlationId} reads the MDC entry that IncomingHttpLoggingFilter sets
+        for the life of each request. Empty for anything outside a request.
+      -->
+      <PatternLayout pattern="%d{HH:mm:ss.SSS} %-5level [%X{correlationId}] %logger{36} - %msg%n"/>
+    </Console>
+
+    <!--
+      HTTP traffic. Timestamped like any other log line, so a traffic line and an
+      app line interleaved on stdout share one clock and one format.
+
+      No %level and no %logger, though: every traffic line has the same level and
+      the same logger, so both columns would be one string repeated forever. The
+      [IN  - REQ] tag the message carries is the field that actually discriminates.
+    -->
+    <Console name="HttpTraffic" target="SYSTEM_OUT">
+      <PatternLayout pattern="%d{HH:mm:ss.SSS} %msg%n"/>
+    </Console>
+  </Appenders>
+
+  <Loggers>
+    <!--
+      Traffic logger. The name is a PURPOSE, not a class name: HttpExchangeLogger
+      asks for this logger explicitly rather than using its own class name, so
+      renaming or moving that class cannot silently unroute the appender.
+
+      Everything else in the httplogging package (e.g. the filter's fail-open
+      warning) logs normally to Console, which is what you want — a warning with
+      no timestamp and no level would be a poor way to learn that logging broke.
+
+      additivity="false" keeps traffic dumps out of Console.
+      The level is the master switch, overridable via application.yml.
+    -->
+    <Logger name="ee.authplayground.resourceserver.httptraffic"
+            level="${spring:playground.http-logging.level:-DEBUG}"
+            additivity="false">
+      <AppenderRef ref="HttpTraffic"/>
+    </Logger>
+
+    <!-- Migrated verbatim from the application.yml block this file replaces. -->
+    <Logger name="ee.authplayground.resourceserver" level="DEBUG"/>
+    <Logger name="org.springframework.security" level="INFO"/>
+    <Logger name="org.flywaydb" level="INFO"/>
+
+    <Root level="INFO">
+      <AppenderRef ref="Console"/>
+    </Root>
+  </Loggers>
+
+</Configuration>
